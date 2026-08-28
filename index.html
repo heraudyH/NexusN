@@ -1,1 +1,392 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Nexus Numérique — Koffikro</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@500;600&display=swap" rel="stylesheet">
+<style>
+  :root{
+    --ink:#0F1720;
+    --panel:#19222C;
+    --panel-2:#212C38;
+    --paper:#ECE6D8;
+    --mist:#8FA0AC;
+    --gold:#E3A544;
+    --clay:#D9673C;
+    --leaf:#4F8F6B;
+    --teal:#3E8E8C;
+    --slate:#6E7C91;
+    --signal:#C75450;
+    --line:rgba(236,230,216,0.10);
+  }
+  *{box-sizing:border-box; margin:0; padding:0;}
+  html{scroll-behavior:smooth;}
+  body{
+    background:var(--ink);
+    color:var(--paper);
+    font-family:'IBM Plex Sans', sans-serif;
+    line-height:1.6;
+    -webkit-font-smoothing:antialiased;
+  }
+  h1,h2,h3,.display{
+    font-family:'Space Grotesk', sans-serif;
+    font-weight:700;
+    letter-spacing:-0.01em;
+  }
+  .mono{font-family:'IBM Plex Mono', monospace;}
+  a{color:inherit; text-decoration:none;}
+  .wrap{max-width:1120px; margin:0 auto; padding:0 24px;}
+  section{padding:88px 0; border-bottom:1px solid var(--line);}
 
+  header{
+    position:sticky; top:0; z-index:50;
+    background:rgba(15,23,32,0.88);
+    backdrop-filter:blur(10px);
+    border-bottom:1px solid var(--line);
+  }
+  header .wrap{display:flex; align-items:center; justify-content:space-between; padding:18px 24px;}
+  .logo{display:flex; align-items:baseline; gap:8px;}
+  .logo .display{font-size:1.35rem; letter-spacing:-0.02em;}
+  .logo .tag{font-size:0.68rem; color:var(--mist); letter-spacing:0.14em; text-transform:uppercase;}
+  nav{display:flex; align-items:center; gap:28px;}
+  nav a{font-size:0.88rem; color:var(--mist); transition:color .2s;}
+  nav a:hover{color:var(--paper);}
+  .btn{
+    display:inline-flex; align-items:center; gap:8px;
+    padding:11px 20px; border-radius:100px;
+    font-size:0.88rem; font-weight:600; cursor:pointer;
+    transition:transform .15s ease, box-shadow .15s ease;
+    white-space:nowrap;
+  }
+  .btn:hover{transform:translateY(-1px);}
+  .btn-gold{background:var(--gold); color:var(--ink);}
+  .btn-gold:hover{box-shadow:0 8px 24px -8px rgba(227,165,68,0.55);}
+  .btn-ghost{border:1px solid var(--line); color:var(--paper);}
+  .btn-ghost:hover{border-color:var(--paper);}
+  header nav .btn{padding:9px 18px; font-size:0.82rem;}
+
+  .hero{padding-top:72px; padding-bottom:40px;}
+  .hero-grid{display:grid; grid-template-columns:1.05fr 0.95fr; gap:56px; align-items:center;}
+  .eyebrow{
+    font-family:'IBM Plex Mono', monospace; font-size:0.72rem;
+    color:var(--gold); letter-spacing:0.16em; text-transform:uppercase;
+    margin-bottom:18px; display:block;
+  }
+  .hero h1{font-size:2.7rem; line-height:1.08; margin-bottom:22px;}
+  .hero p.lead{font-size:1.06rem; color:var(--mist); max-width:46ch; margin-bottom:32px;}
+  .hero-ctas{display:flex; gap:14px; flex-wrap:wrap;}
+
+  .diagram-box{display:flex; justify-content:center;}
+  #hub-svg{width:100%; max-width:420px; height:auto;}
+  .spoke{stroke-dasharray:220; stroke-dashoffset:220; transition:stroke-dashoffset 1.1s ease;}
+  .hub-svg-ready .spoke{stroke-dashoffset:0;}
+  .node-label{font-family:'IBM Plex Sans', sans-serif; font-size:10.5px; fill:var(--paper); font-weight:500;}
+  .node-circle{transition:r .2s ease, filter .2s ease; cursor:pointer;}
+  .node-group:hover .node-circle{filter:brightness(1.25);}
+  .center-circle{fill:var(--panel-2); stroke:var(--gold); stroke-width:1.5;}
+  .center-text{font-family:'Space Grotesk',sans-serif; font-weight:700; font-size:14px; fill:var(--paper);}
+
+  .compare-grid{display:grid; grid-template-columns:1fr 1fr; gap:24px; margin-top:36px;}
+  .compare-card{background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:28px;}
+  .compare-card h3{font-size:0.78rem; letter-spacing:0.1em; text-transform:uppercase; color:var(--mist); margin-bottom:18px; font-family:'IBM Plex Mono',monospace; font-weight:600;}
+  .compare-card.now{border-color:rgba(227,165,68,0.35);}
+  .compare-card.now h3{color:var(--gold);}
+  .pill-list{display:flex; flex-wrap:wrap; gap:8px;}
+  .pill{
+    font-size:0.82rem; padding:6px 12px; border-radius:100px;
+    background:var(--panel-2); color:var(--paper); border:1px solid var(--line);
+  }
+
+  h2.section-title{font-size:1.9rem; margin-bottom:8px;}
+  .section-sub{color:var(--mist); font-size:0.98rem; max-width:60ch; margin-bottom:44px;}
+
+  .poles-grid{display:grid; grid-template-columns:repeat(2,1fr); gap:18px;}
+  .pole-card{
+    background:var(--panel); border:1px solid var(--line); border-radius:16px;
+    padding:26px 26px 24px; border-left:3px solid var(--accent, var(--gold));
+    position:relative;
+  }
+  .pole-card .num{font-family:'IBM Plex Mono',monospace; font-size:0.72rem; color:var(--accent,var(--gold)); letter-spacing:0.08em;}
+  .pole-card h3{font-size:1.15rem; margin:8px 0 14px;}
+  .pole-card .pill-list .pill{border-color:rgba(255,255,255,0.06);}
+  .pole-card:nth-child(5){grid-column:1 / -1;}
+  .pole-card:nth-child(5) .pill-list{max-width:640px;}
+
+  .sites-grid{display:grid; grid-template-columns:repeat(3,1fr); gap:18px;}
+  .site-card{background:var(--panel); border:1px solid var(--line); border-radius:16px; padding:28px;}
+  .site-card .site-name{font-size:0.78rem; letter-spacing:0.1em; text-transform:uppercase; color:var(--mist); margin-bottom:18px;}
+  .stat-row{display:flex; gap:28px;}
+  .stat .num{font-family:'IBM Plex Mono',monospace; font-size:2.1rem; font-weight:600; color:var(--paper); display:block;}
+  .stat .label{font-size:0.76rem; color:var(--mist);}
+
+  .timeline{display:grid; grid-template-columns:repeat(3,1fr); gap:20px;}
+  .phase{background:var(--panel); border-radius:16px; padding:26px; border-top:3px solid var(--dot);}
+  .phase .dot-label{display:flex; align-items:center; gap:10px; margin-bottom:16px;}
+  .dot{width:10px; height:10px; border-radius:50%; background:var(--dot);}
+  .phase h3{font-size:1.02rem;}
+  .phase ul{list-style:none; display:flex; flex-direction:column; gap:9px;}
+  .phase li{font-size:0.9rem; color:var(--mist); padding-left:16px; position:relative;}
+  .phase li::before{content:"—"; position:absolute; left:0; color:var(--dot);}
+
+  .contact-box{
+    background:linear-gradient(135deg, var(--panel), var(--panel-2));
+    border:1px solid var(--line); border-radius:20px;
+    padding:48px; text-align:center;
+  }
+  .contact-box h2{font-size:1.8rem; margin-bottom:12px;}
+  .contact-box p{color:var(--mist); max-width:50ch; margin:0 auto 28px;}
+
+  footer{padding:36px 0; text-align:center; color:var(--mist); font-size:0.82rem;}
+  footer .display{color:var(--paper); font-size:0.95rem; margin-bottom:6px;}
+
+  @media (max-width:860px){
+    .hero-grid{grid-template-columns:1fr;}
+    .hero h1{font-size:2.1rem;}
+    .compare-grid, .poles-grid, .sites-grid, .timeline{grid-template-columns:1fr;}
+    .pole-card:nth-child(5){grid-column:auto;}
+    nav a:not(.btn){display:none;}
+    section{padding:56px 0;}
+    .contact-box{padding:32px 22px;}
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap">
+    <div class="logo">
+      <span class="display">NEXUS</span>
+      <span class="tag">Numérique · Koffikro</span>
+    </div>
+    <nav>
+      <a href="#poles">Pôles</a>
+      <a href="#sites">Sites</a>
+      <a href="#rentree">Rentrée</a>
+      <a class="btn btn-gold" href="https://wa.me/2250000000000" target="_blank" rel="noopener">WhatsApp</a>
+    </nav>
+  </div>
+</header>
+
+<section class="hero">
+  <div class="wrap hero-grid">
+    <div>
+      <span class="eyebrow">Koffikro — économie circulaire locale</span>
+      <h1>Une seule activité<br>fait travailler cinq pôles.</h1>
+      <p class="lead">Nexus Numérique relie le gaming, la personnalisation textile, l'agriculture, l'environnement et le bâtiment en une seule plateforme de services de proximité.</p>
+      <div class="hero-ctas">
+        <a class="btn btn-gold" href="https://wa.me/2250000000000" target="_blank" rel="noopener">Discuter sur WhatsApp</a>
+        <a class="btn btn-ghost" href="#poles">Découvrir les pôles</a>
+      </div>
+    </div>
+    <div class="diagram-box">
+      <svg id="hub-svg" viewBox="0 0 420 420" xmlns="http://www.w3.org/2000/svg">
+        <line class="spoke" x1="210" y1="210" x2="210" y2="70"  stroke="#E3A544" stroke-width="1.5"/>
+        <line class="spoke" x1="210" y1="210" x2="342" y2="150" stroke="#D9673C" stroke-width="1.5"/>
+        <line class="spoke" x1="210" y1="210" x2="322" y2="300" stroke="#4F8F6B" stroke-width="1.5"/>
+        <line class="spoke" x1="210" y1="210" x2="118" y2="320" stroke="#3E8E8C" stroke-width="1.5"/>
+        <line class="spoke" x1="210" y1="210" x2="78"  y2="150" stroke="#6E7C91" stroke-width="1.5"/>
+
+        <circle class="center-circle" cx="210" cy="210" r="46"/>
+        <text class="center-text" x="210" y="206" text-anchor="middle">NEXUS</text>
+        <text class="node-label" x="210" y="222" text-anchor="middle" fill="#8FA0AC">effet nexus</text>
+
+        <g class="node-group">
+          <circle class="node-circle" cx="210" cy="70" r="30" fill="#E3A544"/>
+          <text class="node-label" x="210" y="66" text-anchor="middle" fill="#0F1720" font-weight="600">Numérique</text>
+          <text class="node-label" x="210" y="79" text-anchor="middle" fill="#0F1720" font-weight="600">&amp; Loisirs</text>
+        </g>
+        <g class="node-group">
+          <circle class="node-circle" cx="342" cy="150" r="30" fill="#D9673C"/>
+          <text class="node-label" x="342" y="146" text-anchor="middle" fill="#0F1720" font-weight="600">Communi-</text>
+          <text class="node-label" x="342" y="159" text-anchor="middle" fill="#0F1720" font-weight="600">cation</text>
+        </g>
+        <g class="node-group">
+          <circle class="node-circle" cx="322" cy="300" r="30" fill="#4F8F6B"/>
+          <text class="node-label" x="322" y="296" text-anchor="middle" fill="#0F1720" font-weight="600">Agri-</text>
+          <text class="node-label" x="322" y="309" text-anchor="middle" fill="#0F1720" font-weight="600">culture</text>
+        </g>
+        <g class="node-group">
+          <circle class="node-circle" cx="118" cy="320" r="30" fill="#3E8E8C"/>
+          <text class="node-label" x="118" y="316" text-anchor="middle" fill="#0F1720" font-weight="600">Environ-</text>
+          <text class="node-label" x="118" y="329" text-anchor="middle" fill="#0F1720" font-weight="600">nement</text>
+        </g>
+        <g class="node-group">
+          <circle class="node-circle" cx="78" cy="150" r="30" fill="#6E7C91"/>
+          <text class="node-label" x="78" y="146" text-anchor="middle" fill="#0F1720" font-weight="600">Bâtiment</text>
+          <text class="node-label" x="78" y="159" text-anchor="middle" fill="#0F1720" font-weight="600">&amp; Maintenance</text>
+        </g>
+      </svg>
+    </div>
+  </div>
+</section>
+
+<section id="vision">
+  <div class="wrap">
+    <h2 class="section-title">Ce qui change</h2>
+    <p class="section-sub">Le gaming et le numérique restent le cœur du projet, mais ils ne sont plus seuls.</p>
+    <div class="compare-grid">
+      <div class="compare-card">
+        <h3>Avant</h3>
+        <div class="pill-list">
+          <span class="pill">Gaming</span><span class="pill">Informatique</span>
+          <span class="pill">Impression</span><span class="pill">Flocage</span>
+        </div>
+      </div>
+      <div class="compare-card now">
+        <h3>Maintenant</h3>
+        <div class="pill-list">
+          <span class="pill">Numérique &amp; loisirs</span><span class="pill">Communication</span>
+          <span class="pill">Agriculture</span><span class="pill">Environnement</span><span class="pill">Bâtiment</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="poles">
+  <div class="wrap">
+    <h2 class="section-title">Nos cinq pôles</h2>
+    <p class="section-sub">Chaque pôle est suivi séparément — recette, coût, marge, responsable.</p>
+    <div class="poles-grid">
+      <div class="pole-card" style="--accent:#E3A544">
+        <span class="num">Pôle 01</span>
+        <h3>Numérique &amp; Loisirs</h3>
+        <div class="pill-list">
+          <span class="pill">Jeux vidéo</span><span class="pill">Informatique</span><span class="pill">Impression</span>
+          <span class="pill">Formation</span><span class="pill">Services numériques</span>
+        </div>
+      </div>
+      <div class="pole-card" style="--accent:#D9673C">
+        <span class="num">Pôle 02</span>
+        <h3>Communication &amp; Personnalisation</h3>
+        <div class="pill-list">
+          <span class="pill">Flocage</span><span class="pill">Tee-shirts</span><span class="pill">Maillots</span>
+          <span class="pill">Casquettes</span><span class="pill">Affiches</span>
+        </div>
+      </div>
+      <div class="pole-card" style="--accent:#4F8F6B">
+        <span class="num">Pôle 03</span>
+        <h3>Agriculture &amp; Valorisation</h3>
+        <div class="pill-list">
+          <span class="pill">Agriculture</span><span class="pill">Pépinière</span><span class="pill">Compost</span>
+          <span class="pill">Déchets organiques</span><span class="pill">Prestations agricoles</span>
+        </div>
+      </div>
+      <div class="pole-card" style="--accent:#3E8E8C">
+        <span class="num">Pôle 04</span>
+        <h3>Environnement &amp; Propreté</h3>
+        <div class="pill-list">
+          <span class="pill">Collecte</span><span class="pill">Tri</span><span class="pill">Nettoyage</span>
+          <span class="pill">Recyclage</span><span class="pill">Entretien des espaces</span>
+        </div>
+      </div>
+      <div class="pole-card" style="--accent:#6E7C91">
+        <span class="num">Pôle 05</span>
+        <h3>Bâtiment &amp; Maintenance</h3>
+        <div class="pill-list">
+          <span class="pill">Peinture</span><span class="pill">Vitrerie</span><span class="pill">Électricité</span>
+          <span class="pill">Plomberie</span><span class="pill">Menuiserie</span><span class="pill">Maintenance</span>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="sites">
+  <div class="wrap">
+    <h2 class="section-title">Nos sites actuels</h2>
+    <p class="section-sub">L'objectif n'est pas d'ouvrir plus d'antennes — c'est de rendre celles qui existent rentables.</p>
+    <div class="sites-grid">
+      <div class="site-card">
+        <div class="site-name">Siège — Koffikro</div>
+        <div class="stat-row">
+          <div class="stat"><span class="num">2</span><span class="label">Télévisions</span></div>
+          <div class="stat"><span class="num">4</span><span class="label">Consoles</span></div>
+        </div>
+      </div>
+      <div class="site-card">
+        <div class="site-name">Antenne 1</div>
+        <div class="stat-row">
+          <div class="stat"><span class="num">2</span><span class="label">Télévisions</span></div>
+          <div class="stat"><span class="num">2</span><span class="label">Consoles</span></div>
+        </div>
+      </div>
+      <div class="site-card">
+        <div class="site-name">Antenne 2</div>
+        <div class="stat-row">
+          <div class="stat"><span class="num">1</span><span class="label">Télévision</span></div>
+          <div class="stat"><span class="num">1</span><span class="label">Console</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="rentree">
+  <div class="wrap">
+    <h2 class="section-title">Notre plan pour la rentrée</h2>
+    <p class="section-sub">Trois temps, dans l'ordre.</p>
+    <div class="timeline">
+      <div class="phase" style="--dot:#C75450">
+        <div class="dot-label"><span class="dot"></span><span class="mono" style="font-size:0.72rem; color:var(--mist); text-transform:uppercase; letter-spacing:0.08em;">Avant la rentrée</span></div>
+        <ul>
+          <li>Remettre le siège en ordre</li>
+          <li>Vérifier le matériel</li>
+          <li>Remettre l'imprimante en service</li>
+          <li>Intégrer le nouveau technicien</li>
+          <li>Définir les tarifs</li>
+          <li>Contacter les écoles</li>
+        </ul>
+      </div>
+      <div class="phase" style="--dot:#D9673C">
+        <div class="dot-label"><span class="dot"></span><span class="mono" style="font-size:0.72rem; color:var(--mist); text-transform:uppercase; letter-spacing:0.08em;">Après la rentrée</span></div>
+        <ul>
+          <li>Suivre les recettes</li>
+          <li>Rechercher de nouveaux clients</li>
+          <li>Développer le flocage</li>
+          <li>Développer l'impression</li>
+          <li>Prospecter entreprises et clubs</li>
+        </ul>
+      </div>
+      <div class="phase" style="--dot:#4F8F6B">
+        <div class="dot-label"><span class="dot"></span><span class="mono" style="font-size:0.72rem; color:var(--mist); text-transform:uppercase; letter-spacing:0.08em;">Ensuite</span></div>
+        <ul>
+          <li>Développer le bâtiment</li>
+          <li>Développer l'environnement</li>
+          <li>Lancer le compost</li>
+          <li>Développer l'agriculture</li>
+          <li>Créer de nouveaux partenariats</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="contact" style="border-bottom:none;">
+  <div class="wrap">
+    <div class="contact-box">
+      <h2 class="display">Parlons de votre projet</h2>
+      <p>Écoles, clubs, entreprises, associations ou particuliers — écrivez-nous pour un devis flocage, une réservation gaming ou une prestation d'un autre pôle.</p>
+      <a class="btn btn-gold" href="https://wa.me/2250000000000" target="_blank" rel="noopener">Écrire sur WhatsApp</a>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <div class="display">NEXUS NUMÉRIQUE</div>
+    <div>Koffikro · Plateforme locale de services et d'économie circulaire</div>
+  </div>
+</footer>
+
+<script>
+  window.addEventListener('load', function(){
+    document.getElementById('hub-svg').classList.add('hub-svg-ready');
+  });
+</script>
+
+</body>
+</html>
