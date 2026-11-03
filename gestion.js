@@ -22,7 +22,17 @@
   };
   const EDITABLE_STATUS = ['brouillon', 'envoye'];
 
-  const state = { user: null, profile: null, tab: 'devis', clients: [], tiers: [], quotes: [], loginMsg: '' };
+  // Avancement d'une commande (le devis, lui, a ses propres statuts ci-dessus)
+  const ORDER_STATUS = {
+    devis_accepte: 'Devis accepté', acompte_recu: 'Acompte reçu', visuel_validation: 'Visuel en validation',
+    visuel_valide: 'Visuel validé', en_production: 'En production', controle: 'Contrôle qualité',
+    prete: 'Commande prête', livree: 'Livrée', soldee: 'Soldée', terminee: 'Terminée', annulee: 'Annulée'
+  };
+  const ORDER_CLOSED = ['livree', 'soldee', 'terminee', 'annulee'];   // plus de retard possible
+  const PAY_METHODS = { especes: 'Espèces', mobile_money: 'Mobile Money', virement: 'Virement', autre: 'Autre' };
+  const PAY_KINDS = { acompte: 'Acompte', paiement: 'Paiement', solde: 'Solde' };
+
+  const state = { user: null, profile: null, tab: 'devis', clients: [], tiers: [], quotes: [], orders: [], loginMsg: '' };
 
   /* ---------------------------- Outils ---------------------------- */
   const $ = (sel, root) => (root || document).querySelector(sel);
@@ -127,12 +137,22 @@
     if (r.error) throw r.error;
     state.tiers = r.data;
   }
+  // Une relation « un à un » peut revenir sous forme d'objet ou de liste : on la normalise
+  function one(v) { return Array.isArray(v) ? (v[0] || null) : (v || null); }
+
   async function loadQuotes() {
     const r = await sb.from('quotes')
-      .select('*, clients(id,name,client_type,organization,contact_person,phone,whatsapp,address), quote_items(id,description,quantity,unit_price,price_override_reason)')
+      .select('*, clients(id,name,client_type,organization,contact_person,phone,whatsapp,address), quote_items(id,description,quantity,unit_price,price_override_reason), orders(id,order_number)')
       .order('created_at', { ascending: false });
     if (r.error) throw r.error;
-    state.quotes = r.data;
+    state.quotes = r.data.map(function (q) { q.order = one(q.orders); return q; });
+  }
+  async function loadOrders() {
+    const r = await sb.from('orders')
+      .select('*, clients(id,name,client_type,phone,whatsapp), order_items(id,description,quantity), payments(id,amount,kind,method,reference,paid_at,note,receipt_number,created_at), quotes(quote_number)')
+      .order('created_at', { ascending: false });
+    if (r.error) throw r.error;
+    state.orders = r.data.map(function (o) { o.quote = one(o.quotes); return o; });
   }
 
   /* ---------------------------- Calculs ---------------------------- */
@@ -140,6 +160,10 @@
     return (items || []).reduce(function (s, i) { return s + Number(i.quantity) * Number(i.unit_price); }, 0);
   }
   function quoteTotal(q) { return subTotal(q.quote_items) - Number(q.discount || 0) + Number(q.extra_fees || 0); }
+  function paidOf(o) { return (o.payments || []).reduce(function (s, p) { return s + Number(p.amount); }, 0); }
+  function restOf(o) { return Number(o.total_amount) - paidOf(o); }
+  function todayStr() { return new Date().toISOString().slice(0, 10); }
+  function isLate(o) { return !!o.due_date && o.due_date < todayStr() && ORDER_CLOSED.indexOf(o.status) === -1; }
 
   // Tarif applicable : un tarif propre au type de client prime sur un tarif général
   function suggestTier(clientType, qty) {
@@ -203,6 +227,7 @@
       '<button class="btn btn-ghost btn-small" id="logout">Déconnexion</button></div></header>' +
       '<nav class="tabs">' +
       '<button class="tab" data-tab="devis">Devis</button>' +
+      '<button class="tab" data-tab="commandes">Commandes</button>' +
       '<button class="tab" data-tab="clients">Clients</button>' +
       '<button class="tab" data-tab="tarifs">Tarifs</button></nav>' +
       '<main id="view"></main>';
@@ -216,6 +241,7 @@
     state.tab = tab;
     $$('.tab').forEach(function (b) { b.classList.toggle('active', b.getAttribute('data-tab') === tab); });
     if (tab === 'devis') renderQuotes();
+    else if (tab === 'commandes') renderOrders();
     else if (tab === 'clients') renderClients();
     else renderTiers();
   }
@@ -387,7 +413,8 @@
         '<span class="badge st-' + esc(q.status) + '">' + esc(QUOTE_STATUS[q.status] || q.status) + '</span></div>' +
         '<div class="card-client">' + esc(q.clients ? q.clients.name : '') + '</div>' +
         '<div class="card-meta"><span>Total : <b>' + money(quoteTotal(q)) + '</b></span>' +
-        '<span>Valable jusqu\'au ' + esc(fmtDateOnly(q.valid_until)) + '</span></div>' +
+        '<span>Valable jusqu\'au ' + esc(fmtDateOnly(q.valid_until)) + '</span>' +
+        (q.order ? '<span>Commande : <b>' + esc(q.order.order_number) + '</b></span>' : '') + '</div>' +
         '<div class="card-actions"><button class="btn btn-small" data-act="open" data-id="' + esc(q.id) + '">Ouvrir</button>' +
         '<button class="btn btn-small btn-ghost" data-act="pdf" data-id="' + esc(q.id) + '">PDF</button></div></article>';
     }).join('') : '<p class="empty">Aucun devis pour le moment.</p>';
@@ -523,19 +550,39 @@
     field('extra_fees').addEventListener('input', updateTotals);
 
     const buttons = [];
+    let modalRef = null;
     if (!isNew) {
       const pdfBtn = document.createElement('button');
       pdfBtn.type = 'button'; pdfBtn.className = 'btn btn-ghost'; pdfBtn.textContent = 'PDF (version enregistrée)';
       pdfBtn.addEventListener('click', function () { makePdf(q); });
       buttons.push(pdfBtn);
+      // Devis accepté et pas encore converti : bouton de conversion en commande
+      if (q.status === 'accepte' && !q.order) {
+        const convBtn = document.createElement('button');
+        convBtn.type = 'button'; convBtn.className = 'btn'; convBtn.textContent = 'Convertir en commande';
+        convBtn.addEventListener('click', async function () {
+          if (!window.confirm('Créer la commande à partir de ' + q.quote_number + ' ?\nLe montant du devis sera figé dans la commande.')) return;
+          convBtn.disabled = true;
+          const r = await sb.rpc('convert_quote_to_order', { p_quote_id: q.id });
+          if (r.error) { toast(errMsg(r.error), true); convBtn.disabled = false; return; }
+          try { await Promise.all([loadQuotes(), loadOrders()]); } catch (e) { toast(errMsg(e), true); }
+          if (modalRef) modalRef.close();
+          toast('Commande créée.');
+          showTab('commandes');
+        });
+        buttons.push(convBtn);
+      }
     }
 
-    openModal(isNew ? 'Nouveau devis' : q.quote_number, body, {
+    modalRef = openModal(isNew ? 'Nouveau devis' : q.quote_number, body, {
       buttons: buttons,
       submitLabel: 'Enregistrer',
       onSubmit: async function () {
         // Devis verrouillé : seul le statut peut changer
         if (locked) {
+          if (q.order && field('status').value !== q.status) {
+            throw new Error('Ce devis a déjà une commande (' + q.order.order_number + ') : son statut ne peut plus changer.');
+          }
           const r0 = await sb.from('quotes').update({ status: field('status').value }).eq('id', q.id);
           if (r0.error) throw r0.error;
           await loadQuotes(); renderQuotes(); toast('Statut mis à jour.');
@@ -697,6 +744,237 @@
     doc.save((q.quote_number || 'devis') + '.pdf');
   }
 
+  /* ---------------------------- COMMANDES ---------------------------- */
+  function fmtDateTime(s) { const d = new Date(s); return fmtDateTs(s) + ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes()); }
+  function orderBadge(st) {
+    if (st === 'annulee') return 'st-refuse';
+    if (['livree', 'soldee', 'terminee'].indexOf(st) !== -1) return 'st-accepte';
+    return 'st-envoye';
+  }
+
+  function renderOrders() {
+    const view = $('#view');
+    const open = state.orders.filter(function (o) { return ORDER_CLOSED.indexOf(o.status) === -1; });
+    const late = state.orders.filter(isLate);
+    const toCash = state.orders.reduce(function (s, o) { return s + (o.status === 'annulee' ? 0 : Math.max(restOf(o), 0)); }, 0);
+    view.innerHTML =
+      '<div class="view-head"><h2>Commandes</h2></div>' +
+      '<p class="hint">Une commande se crée depuis un devis accepté : ouvrez le devis (onglet Devis) puis « Convertir en commande ».</p>' +
+      '<div class="stats">' +
+      '<div class="stat-box"><span>En cours</span><b>' + open.length + '</b></div>' +
+      '<div class="stat-box' + (late.length ? ' bad' : '') + '"><span>En retard</span><b>' + late.length + '</b></div>' +
+      '<div class="stat-box"><span>Reste à encaisser</span><b>' + money(toCash) + '</b></div></div>' +
+      '<div class="filters"><input id="o-search" type="search" placeholder="Rechercher (numéro ou client)">' +
+      '<select id="o-status"><option value="">Tous les statuts</option><option value="__retard">En retard</option>' + options(ORDER_STATUS, '') + '</select></div>' +
+      '<div id="o-list"></div>';
+    $('#o-search').addEventListener('input', renderOrderList);
+    $('#o-status').addEventListener('change', renderOrderList);
+    $('#o-list').addEventListener('click', function (e) {
+      const b = e.target.closest('[data-id]');
+      if (!b) return;
+      const o = state.orders.find(function (x) { return x.id === b.getAttribute('data-id'); });
+      if (o) openOrderModal(o);
+    });
+    renderOrderList();
+  }
+
+  function renderOrderList() {
+    const term = $('#o-search').value.trim().toLowerCase();
+    const st = $('#o-status').value;
+    const rows = state.orders.filter(function (o) {
+      const name = ((o.clients && o.clients.name) || '').toLowerCase();
+      const okSt = !st || (st === '__retard' ? isLate(o) : o.status === st);
+      return okSt && (!term || (o.order_number || '').toLowerCase().includes(term) || name.includes(term));
+    });
+    $('#o-list').innerHTML = rows.length ? rows.map(function (o) {
+      const rest = restOf(o);
+      const late = isLate(o);
+      const wa = o.clients ? waLink(o.clients.whatsapp || o.clients.phone) : '';
+      return '<article class="card' + (late ? ' late' : '') + '"><div class="card-top"><strong>' + esc(o.order_number) + '</strong>' +
+        '<span class="badge ' + orderBadge(o.status) + '">' + esc(ORDER_STATUS[o.status] || o.status) + '</span></div>' +
+        '<div class="card-client">' + esc(o.clients ? o.clients.name : '') + (o.priority === 'urgente' ? ' <span class="badge st-expire">Urgente</span>' : '') + '</div>' +
+        '<div class="card-meta"><span>Total : <b>' + money(o.total_amount) + '</b></span>' +
+        '<span>Payé : <b>' + money(paidOf(o)) + '</b></span>' +
+        '<span>Reste : <b>' + money(rest) + '</b></span>' +
+        (o.due_date ? '<span' + (late ? ' class="late-text"' : '') + '>Livraison : <b>' + esc(fmtDateOnly(o.due_date)) + '</b>' + (late ? ' (en retard)' : '') + '</span>' : '') +
+        (wa ? '<a class="link" href="' + esc(wa) + '" target="_blank" rel="noopener">WhatsApp</a>' : '') + '</div>' +
+        '<div class="card-actions"><button class="btn btn-small" data-id="' + esc(o.id) + '">Ouvrir</button></div></article>';
+    }).join('') : '<p class="empty">Aucune commande pour le moment.</p>';
+  }
+
+  function openOrderModal(order) {
+    const o = order;
+    const rest = restOf(o);
+    const canPay = o.status !== 'annulee' && rest > 0;
+    const pays = (o.payments || []).slice().sort(function (a, b) {
+      return String(a.created_at).localeCompare(String(b.created_at));
+    });
+
+    const payRows = pays.length ? pays.map(function (p) {
+      return '<div class="pay-row"><div><b>' + money(p.amount) + '</b> · ' + esc(PAY_KINDS[p.kind] || p.kind) + ' · ' + esc(PAY_METHODS[p.method] || p.method) +
+        '<div class="l-hint">' + esc(fmtDateOnly(p.paid_at)) + ' · ' + esc(p.receipt_number) + (p.reference ? ' · Réf. ' + esc(p.reference) : '') + '</div></div>' +
+        '<button type="button" class="btn btn-small btn-ghost" data-receipt="' + esc(p.id) + '">Reçu</button></div>';
+    }).join('') : '<p class="hint">Aucun paiement enregistré.</p>';
+
+    const items = (o.order_items || []).map(function (i) {
+      return '<div class="pay-row"><div>' + esc(i.description) + '</div><b>× ' + esc(i.quantity) + '</b></div>';
+    }).join('');
+
+    const payForm = canPay
+      ? '<div class="line"><div class="form-grid">' +
+        '<label class="f">Type<select class="p-kind">' + options(PAY_KINDS, paidOf(o) === 0 ? 'acompte' : 'paiement') + '</select></label>' +
+        '<label class="f">Montant (FCFA)<input class="p-amount" type="number" min="1" inputmode="numeric" placeholder="Reste : ' + fmt(rest) + '"></label>' +
+        '<label class="f">Mode de paiement<select class="p-method">' + options(PAY_METHODS, 'especes') + '</select></label>' +
+        '<label class="f">Référence (facultatif)<input class="p-ref" placeholder="N° de transaction"></label>' +
+        '<label class="f">Date du paiement<input class="p-date" type="date" value="' + todayStr() + '"></label></div>' +
+        '<div class="card-actions"><button type="button" class="btn btn-small" id="pay-add">Ajouter le paiement</button></div></div>'
+      : '<p class="hint">' + (o.status === 'annulee' ? 'Commande annulée : aucun paiement à ajouter.' : 'Commande entièrement payée.') + '</p>';
+
+    const body = h(
+      '<div>' +
+      '<div class="totals"><div><span>Total de la commande</span><span>' + money(o.total_amount) + '</span></div>' +
+      '<div><span>Déjà payé</span><span>' + money(paidOf(o)) + '</span></div>' +
+      '<div class="grand"><span>Reste à payer</span><span>' + money(rest) + '</span></div></div>' +
+      '<div class="card-meta" style="margin-top:8px"><span>Client : <b>' + esc(o.clients ? o.clients.name : '') + '</b></span>' +
+      (o.quote ? '<span>Devis : <b>' + esc(o.quote.quote_number) + '</b></span>' : '') + '</div>' +
+      '<h4>Suivi</h4><div class="form-grid">' +
+      '<label class="f">Statut<select name="status">' + options(ORDER_STATUS, o.status) + '</select></label>' +
+      '<label class="f">Livraison souhaitée<input type="date" name="due_date" value="' + esc(o.due_date) + '"></label>' +
+      '<label class="f">Priorité<select name="priority"><option value="normale"' + (o.priority === 'normale' ? ' selected' : '') + '>Normale</option>' +
+      '<option value="urgente"' + (o.priority === 'urgente' ? ' selected' : '') + '>Urgente</option></select></label>' +
+      '<label class="f full">Notes<textarea name="notes" rows="2">' + esc(o.notes) + '</textarea></label></div>' +
+      '<h4>Articles</h4>' + (items || '<p class="hint">Aucun article.</p>') +
+      '<h4>Paiements</h4><div id="pay-list">' + payRows + '</div>' + payForm +
+      '<h4>Historique</h4><div id="hist" class="hint">Chargement…</div></div>');
+
+    const field = function (n) { return $('[name="' + n + '"]', body); };
+    let modalRef = null;
+
+    // La touche Entrée dans le formulaire de paiement ne doit pas enregistrer la commande
+    $$('.line input', body).forEach(function (i) {
+      i.addEventListener('keydown', function (e) { if (e.key === 'Enter') e.preventDefault(); });
+    });
+
+    body.addEventListener('click', function (e) {
+      const rb = e.target.closest('[data-receipt]');
+      if (!rb) return;
+      const p = (o.payments || []).find(function (x) { return x.id === rb.getAttribute('data-receipt'); });
+      if (p) makeReceipt(o, p);
+    });
+
+    const addBtn = $('#pay-add', body);
+    if (addBtn) addBtn.addEventListener('click', async function () {
+      const amount = parseInt($('.p-amount', body).value, 10);
+      if (!(amount >= 1)) { toast('Indiquez un montant valide.', true); return; }
+      if (amount > rest) { toast('Le montant dépasse le reste à payer (' + money(rest) + ').', true); return; }
+      addBtn.disabled = true;
+      const r = await sb.from('payments').insert({
+        order_id: o.id, amount: amount, kind: $('.p-kind', body).value, method: $('.p-method', body).value,
+        reference: $('.p-ref', body).value.trim() || null, paid_at: $('.p-date', body).value || todayStr()
+      }).select().single();
+      if (r.error) { toast(errMsg(r.error), true); addBtn.disabled = false; return; }
+      try { await loadOrders(); } catch (err) { toast(errMsg(err), true); }
+      if (modalRef) modalRef.close();
+      if (state.tab === 'commandes') renderOrders();
+      const fresh = state.orders.find(function (x) { return x.id === o.id; });
+      if (fresh) openOrderModal(fresh);
+      toast('Paiement enregistré : ' + r.data.receipt_number);
+    });
+
+    modalRef = openModal(o.order_number, body, {
+      submitLabel: 'Enregistrer',
+      onSubmit: async function () {
+        const status = field('status').value;
+        if (status !== o.status) {
+          if ((status === 'soldee' || status === 'terminee') && rest > 0) {
+            throw new Error('Impossible : il reste ' + money(rest) + ' à payer. Enregistrez d\'abord le paiement.');
+          }
+          if (['en_production', 'controle', 'prete', 'livree'].indexOf(status) !== -1 && paidOf(o) === 0) {
+            if (!window.confirm('Aucun paiement n\'est enregistré pour cette commande. Continuer quand même ?')) return false;
+          }
+          if (status === 'annulee' && paidOf(o) > 0) {
+            if (!window.confirm('Des paiements (' + money(paidOf(o)) + ') ont déjà été encaissés. Annuler quand même la commande ?')) return false;
+          }
+        }
+        const r = await sb.from('orders').update({
+          status: status, due_date: field('due_date').value || null, priority: field('priority').value,
+          notes: field('notes').value.trim() || null
+        }).eq('id', o.id);
+        if (r.error) throw r.error;
+        await loadOrders();
+        if (state.tab === 'commandes') renderOrders();
+        toast('Commande mise à jour.');
+        return true;
+      }
+    });
+
+    // Historique des changements de statut (chargé après l'ouverture)
+    sb.from('order_status_history').select('status,changed_at').eq('order_id', o.id).order('changed_at')
+      .then(function (r) {
+        const box = $('#hist', body);
+        if (!box) return;
+        if (r.error || !r.data || !r.data.length) { box.textContent = 'Aucun changement enregistré.'; return; }
+        box.className = '';
+        box.innerHTML = r.data.map(function (x) {
+          return '<div class="pay-row"><div>' + esc(ORDER_STATUS[x.status] || x.status) + '</div><span class="l-hint">' + esc(fmtDateTime(x.changed_at)) + '</span></div>';
+        }).join('');
+      });
+  }
+
+  /* ---------------------------- REÇU DE PAIEMENT (PDF) ---------------------------- */
+  function makeReceipt(o, p) {
+    if (!window.jspdf) { toast('Le module PDF n\'a pas pu se charger. Vérifiez votre connexion.', true); return; }
+    const doc = new window.jspdf.jsPDF({ unit: 'mm', format: 'a5' });
+    const W = 148, M = 12, green = [31, 107, 70], ink = [23, 38, 30], gray = [102, 122, 112];
+    const client = o.clients || {};
+
+    // Total payé jusqu'à ce paiement inclus (dans l'ordre d'enregistrement)
+    const sorted = (o.payments || []).slice().sort(function (a, b) { return String(a.created_at).localeCompare(String(b.created_at)); });
+    let paidUpTo = 0;
+    for (let i = 0; i < sorted.length; i++) { paidUpTo += Number(sorted[i].amount); if (sorted[i].id === p.id) break; }
+    const left = Number(o.total_amount) - paidUpTo;
+
+    doc.setFillColor(green[0], green[1], green[2]); doc.rect(0, 0, W, 30, 'F');
+    doc.setTextColor(255, 255, 255);
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(16); doc.text(C.COMPANY.name, M, 13);
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5);
+    doc.text([C.COMPANY.address, C.COMPANY.phone, C.COMPANY.email].filter(Boolean).join('  |  '), M, 20);
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(13); doc.text('REÇU DE PAIEMENT', W - M, 13, { align: 'right' });
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
+    doc.text(p.receipt_number || '', W - M, 20, { align: 'right' });
+    doc.text('Date : ' + fmtDateOnly(p.paid_at), W - M, 25, { align: 'right' });
+
+    let y = 42;
+    function row(label, value, bold) {
+      doc.setTextColor(gray[0], gray[1], gray[2]); doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
+      doc.text(label, M, y);
+      doc.setTextColor(ink[0], ink[1], ink[2]); doc.setFont('helvetica', bold ? 'bold' : 'normal'); doc.setFontSize(bold ? 11 : 10);
+      const lines = doc.splitTextToSize(String(value), 80);
+      doc.text(lines, W - M, y, { align: 'right' });
+      y += Math.max(lines.length, 1) * 5.5 + 2;
+    }
+    row('Reçu de', client.name || '');
+    row('Commande', o.order_number);
+    row('Type de paiement', PAY_KINDS[p.kind] || p.kind);
+    row('Mode de paiement', PAY_METHODS[p.method] || p.method);
+    if (p.reference) row('Référence', p.reference);
+    y += 2;
+    doc.setDrawColor(green[0], green[1], green[2]); doc.line(M, y, W - M, y); y += 8;
+    doc.setTextColor(green[0], green[1], green[2]);
+    row('MONTANT REÇU', fmt(p.amount) + ' FCFA', true);
+    y += 2;
+    row('Total de la commande', fmt(o.total_amount) + ' FCFA');
+    row('Total payé à ce jour', fmt(paidUpTo) + ' FCFA');
+    row('Reste à payer', fmt(left) + ' FCFA', true);
+
+    y += 12;
+    doc.setTextColor(gray[0], gray[1], gray[2]); doc.setFontSize(9); doc.setFont('helvetica', 'normal');
+    doc.text('Cachet et signature', W - M, y, { align: 'right' });
+    doc.setFontSize(8);
+    doc.text(C.COMPANY.name + ' - ' + (p.receipt_number || ''), W / 2, 200, { align: 'center' });
+    doc.save((p.receipt_number || 'recu') + '.pdf');
+  }
+
   /* ---------------------------- Démarrage ---------------------------- */
   async function start() {
     const s = await sb.auth.getSession();
@@ -713,7 +991,7 @@
     renderShell();
     $('#view').innerHTML = '<p class="empty">Chargement…</p>';
     try {
-      await Promise.all([loadClients(), loadTiers(), loadQuotes()]);
+      await Promise.all([loadClients(), loadTiers(), loadQuotes(), loadOrders()]);
     } catch (e) {
       toast(errMsg(e), true);
     }
