@@ -1,0 +1,727 @@
+/* =====================================================================
+   NEXUS NUMÉRIQUE — Application de gestion, étape 1
+   Contenu : connexion, clients, tarifs, devis (avec PDF).
+   Fichiers : gestion.html, gestion.css, gestion-config.js, gestion.js
+
+   Sécurité : ce code est public, mais la base de données applique des
+   règles (RLS) : sans compte administrateur actif, aucune donnée n'est
+   accessible. Toutes les valeurs saisies sont échappées avant affichage.
+   ===================================================================== */
+(function () {
+  'use strict';
+
+  const C = window.NEXUS_CONFIG;
+  const sb = window.supabase.createClient(C.SUPABASE_URL, C.SUPABASE_KEY);
+
+  const CLIENT_TYPES = {
+    particulier: 'Particulier', ecole: 'École', association: 'Association',
+    club: 'Club', entreprise: 'Entreprise', autre: 'Autre'
+  };
+  const QUOTE_STATUS = {
+    brouillon: 'Brouillon', envoye: 'Envoyé', accepte: 'Accepté', refuse: 'Refusé', expire: 'Expiré'
+  };
+  const EDITABLE_STATUS = ['brouillon', 'envoye'];
+
+  const state = { user: null, profile: null, tab: 'devis', clients: [], tiers: [], quotes: [], loginMsg: '' };
+
+  /* ---------------------------- Outils ---------------------------- */
+  const $ = (sel, root) => (root || document).querySelector(sel);
+  const $$ = (sel, root) => Array.from((root || document).querySelectorAll(sel));
+
+  function esc(v) {
+    return String(v == null ? '' : v).replace(/[&<>"']/g, function (c) {
+      return { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c];
+    });
+  }
+  function h(html) {
+    const t = document.createElement('template');
+    t.innerHTML = html.trim();
+    return t.content.firstElementChild;
+  }
+  // Espaces ordinaires comme séparateurs de milliers (compatible PDF)
+  function fmt(n) { return String(Math.round(Number(n) || 0)).replace(/\B(?=(\d{3})+(?!\d))/g, ' '); }
+  function money(n) { return fmt(n) + ' FCFA'; }
+  function pad(n) { return String(n).padStart(2, '0'); }
+  function fmtDateOnly(s) { return s ? String(s).split('-').reverse().join('/') : '-'; }
+  function fmtDateTs(s) { const d = new Date(s); return pad(d.getDate()) + '/' + pad(d.getMonth() + 1) + '/' + d.getFullYear(); }
+  function addDays(n) { return new Date(Date.now() + n * 86400000).toISOString().slice(0, 10); }
+  function options(map, selected) {
+    return Object.keys(map).map(function (k) {
+      return '<option value="' + esc(k) + '"' + (k === selected ? ' selected' : '') + '>' + esc(map[k]) + '</option>';
+    }).join('');
+  }
+  function waLink(num) {
+    let d = String(num || '').replace(/\D/g, '');
+    if (!d) return '';
+    if (d.length === 10 && d[0] === '0') d = '225' + d;   // numéro ivoirien à 10 chiffres
+    return 'https://wa.me/' + d;
+  }
+  function errMsg(e) {
+    const m = (e && e.message) || '';
+    if (/row-level security|permission denied/i.test(m)) return "Action non autorisée pour ce compte.";
+    if (/Failed to fetch|NetworkError/i.test(m)) return "Connexion internet indisponible. Réessayez.";
+    return m || 'Une erreur est survenue.';
+  }
+  let toastTimer;
+  function toast(msg, isErr) {
+    const t = $('#toast');
+    t.textContent = msg;
+    t.className = 'show' + (isErr ? ' err' : '');
+    clearTimeout(toastTimer);
+    toastTimer = setTimeout(function () { t.className = ''; }, 3800);
+  }
+
+  /* ---------------------- Fenêtre (modale) générique ---------------------- */
+  function openModal(title, bodyEl, opts) {
+    opts = opts || {};
+    const dlg = document.createElement('dialog');
+    dlg.className = 'modal';
+    const form = document.createElement('form');
+    form.innerHTML =
+      '<div class="modal-head"><h3>' + esc(title) + '</h3>' +
+      '<button type="button" class="icon-btn" data-close aria-label="Fermer">&times;</button></div>' +
+      '<div class="modal-body"></div><div class="modal-foot"></div>';
+    $('.modal-body', form).appendChild(bodyEl);
+    const foot = $('.modal-foot', form);
+    (opts.buttons || []).forEach(function (b) { foot.appendChild(b); });
+    const cancel = document.createElement('button');
+    cancel.type = 'button'; cancel.className = 'btn btn-ghost'; cancel.textContent = 'Fermer';
+    cancel.setAttribute('data-close', '');
+    foot.appendChild(cancel);
+    let submitBtn = null;
+    if (opts.submitLabel) {
+      submitBtn = document.createElement('button');
+      submitBtn.type = 'submit'; submitBtn.className = 'btn'; submitBtn.textContent = opts.submitLabel;
+      foot.appendChild(submitBtn);
+    }
+    dlg.appendChild(form);
+    document.body.appendChild(dlg);
+    const close = function () { dlg.close(); };
+    $$('[data-close]', dlg).forEach(function (b) { b.addEventListener('click', close); });
+    dlg.addEventListener('close', function () { dlg.remove(); });
+    form.addEventListener('submit', async function (e) {
+      e.preventDefault();
+      if (!opts.onSubmit) return;
+      submitBtn.disabled = true;
+      try {
+        const ok = await opts.onSubmit();
+        if (ok !== false) close();
+      } catch (err) {
+        toast(errMsg(err), true);
+      } finally {
+        submitBtn.disabled = false;
+      }
+    });
+    dlg.showModal();
+    return { dlg: dlg, close: close };
+  }
+
+  /* ---------------------------- Chargement des données ---------------------------- */
+  async function loadClients() {
+    const r = await sb.from('clients').select('*').order('name');
+    if (r.error) throw r.error;
+    state.clients = r.data;
+  }
+  async function loadTiers() {
+    const r = await sb.from('price_tiers').select('*').order('client_type', { nullsFirst: true }).order('min_qty');
+    if (r.error) throw r.error;
+    state.tiers = r.data;
+  }
+  async function loadQuotes() {
+    const r = await sb.from('quotes')
+      .select('*, clients(id,name,client_type,organization,contact_person,phone,whatsapp,address), quote_items(id,description,quantity,unit_price,price_override_reason)')
+      .order('created_at', { ascending: false });
+    if (r.error) throw r.error;
+    state.quotes = r.data;
+  }
+
+  /* ---------------------------- Calculs ---------------------------- */
+  function subTotal(items) {
+    return (items || []).reduce(function (s, i) { return s + Number(i.quantity) * Number(i.unit_price); }, 0);
+  }
+  function quoteTotal(q) { return subTotal(q.quote_items) - Number(q.discount || 0) + Number(q.extra_fees || 0); }
+
+  // Tarif applicable : un tarif propre au type de client prime sur un tarif général
+  function suggestTier(clientType, qty) {
+    const q = Number(qty) || 0;
+    const m = state.tiers.filter(function (t) {
+      return t.active && (!t.client_type || t.client_type === clientType) &&
+        q >= t.min_qty && (t.max_qty == null || q <= t.max_qty);
+    });
+    m.sort(function (a, b) {
+      return (b.client_type ? 1 : 0) - (a.client_type ? 1 : 0) || b.min_qty - a.min_qty;
+    });
+    return m[0] || null;
+  }
+
+  /* ---------------------------- Écran de connexion ---------------------------- */
+  function renderLogin(msg) {
+    $('#app').innerHTML =
+      '<div class="login-wrap"><form class="login-card" id="login-form">' +
+      '<div class="brand-mark">N</div><h1>Nexus Numérique</h1>' +
+      '<p class="sub">Espace de gestion — accès réservé à l\'équipe</p>' +
+      (msg ? '<div class="msg">' + esc(msg) + '</div>' : '') +
+      '<div class="form-grid" style="grid-template-columns:1fr">' +
+      '<label class="f">Adresse email<input type="email" name="email" autocomplete="username" required></label>' +
+      '<label class="f">Mot de passe<input type="password" name="password" autocomplete="current-password" required></label>' +
+      '<button class="btn" type="submit">Se connecter</button></div></form></div>';
+    $('#login-form').addEventListener('submit', async function (e) {
+      e.preventDefault();
+      const f = e.target;
+      const btn = $('button', f);
+      btn.disabled = true; btn.textContent = 'Connexion…';
+      const r = await sb.auth.signInWithPassword({ email: f.email.value.trim(), password: f.password.value });
+      if (r.error) {
+        renderLogin('Email ou mot de passe incorrect.');
+        return;
+      }
+      start();
+    });
+  }
+
+  function logout(msg) {
+    state.loginMsg = msg || '';
+    state.user = null; state.profile = null;
+    sb.auth.signOut();
+  }
+
+  function renderOperatorHome() {
+    $('#app').innerHTML =
+      '<div class="login-wrap"><div class="login-card"><div class="brand-mark">N</div>' +
+      '<h1>Bonjour ' + esc(state.profile.full_name || '') + '</h1>' +
+      '<p class="sub">Votre compte production est actif. Vos commandes à produire apparaîtront ici dans une prochaine étape.</p>' +
+      '<button class="btn" id="logout" style="width:100%">Se déconnecter</button></div></div>';
+    $('#logout').addEventListener('click', function () { logout(); });
+  }
+
+  /* ---------------------------- Structure administrateur ---------------------------- */
+  function renderShell() {
+    $('#app').innerHTML =
+      '<header class="topbar"><div class="brand"><div class="brand-mark">N</div>' +
+      '<div><strong>Nexus Numérique</strong><small>Gestion</small></div></div>' +
+      '<div class="user"><span>' + esc(state.profile.full_name || '') + '</span>' +
+      '<button class="btn btn-ghost btn-small" id="logout">Déconnexion</button></div></header>' +
+      '<nav class="tabs">' +
+      '<button class="tab" data-tab="devis">Devis</button>' +
+      '<button class="tab" data-tab="clients">Clients</button>' +
+      '<button class="tab" data-tab="tarifs">Tarifs</button></nav>' +
+      '<main id="view"></main>';
+    $('#logout').addEventListener('click', function () { logout(); });
+    $$('.tab').forEach(function (b) {
+      b.addEventListener('click', function () { showTab(b.getAttribute('data-tab')); });
+    });
+  }
+
+  function showTab(tab) {
+    state.tab = tab;
+    $$('.tab').forEach(function (b) { b.classList.toggle('active', b.getAttribute('data-tab') === tab); });
+    if (tab === 'devis') renderQuotes();
+    else if (tab === 'clients') renderClients();
+    else renderTiers();
+  }
+
+  /* ---------------------------- CLIENTS ---------------------------- */
+  function renderClients() {
+    const view = $('#view');
+    view.innerHTML =
+      '<div class="view-head"><h2>Clients</h2><button class="btn" id="new-client">+ Nouveau client</button></div>' +
+      '<div class="filters" style="grid-template-columns:1fr"><input id="c-search" type="search" placeholder="Rechercher (nom, téléphone, organisation)"></div>' +
+      '<div id="c-list"></div>';
+    $('#new-client').addEventListener('click', function () { openClientModal(null); });
+    $('#c-search').addEventListener('input', renderClientList);
+    $('#c-list').addEventListener('click', function (e) {
+      const b = e.target.closest('[data-id]');
+      if (!b) return;
+      openClientModal(state.clients.find(function (c) { return c.id === b.getAttribute('data-id'); }));
+    });
+    renderClientList();
+  }
+
+  function renderClientList() {
+    const term = $('#c-search').value.trim().toLowerCase();
+    const rows = state.clients.filter(function (c) {
+      if (!term) return true;
+      return [c.name, c.phone, c.whatsapp, c.organization, c.contact_person]
+        .some(function (v) { return (v || '').toLowerCase().includes(term); });
+    });
+    $('#c-list').innerHTML = rows.length ? rows.map(function (c) {
+      const wa = waLink(c.whatsapp || c.phone);
+      return '<article class="card"><div class="card-top"><strong>' + esc(c.name) + '</strong>' +
+        '<span class="badge">' + esc(CLIENT_TYPES[c.client_type] || c.client_type) + '</span></div>' +
+        (c.organization ? '<div class="card-client">' + esc(c.organization) + '</div>' : '') +
+        '<div class="card-meta">' +
+        (c.contact_person ? '<span>Responsable : <b>' + esc(c.contact_person) + '</b></span>' : '') +
+        (c.phone ? '<span>Tél : <b>' + esc(c.phone) + '</b></span>' : '') +
+        (wa ? '<a class="link" href="' + esc(wa) + '" target="_blank" rel="noopener">WhatsApp</a>' : '') +
+        '</div><div class="card-actions"><button class="btn btn-small btn-ghost" data-id="' + esc(c.id) + '">Modifier</button></div></article>';
+    }).join('') : '<p class="empty">Aucun client. Appuyez sur « Nouveau client » pour commencer.</p>';
+  }
+
+  function openClientModal(client) {
+    const c = client || { client_type: 'particulier' };
+    const body = h(
+      '<div class="form-grid">' +
+      '<label class="f full">Nom ou organisation *<input name="name" required value="' + esc(c.name) + '"></label>' +
+      '<label class="f">Type de client<select name="client_type">' + options(CLIENT_TYPES, c.client_type) + '</select></label>' +
+      '<label class="f">École / association / club / entreprise<input name="organization" value="' + esc(c.organization) + '"></label>' +
+      '<label class="f">Personne responsable<input name="contact_person" value="' + esc(c.contact_person) + '"></label>' +
+      '<label class="f">Téléphone<input name="phone" inputmode="tel" value="' + esc(c.phone) + '"></label>' +
+      '<label class="f">WhatsApp<input name="whatsapp" inputmode="tel" value="' + esc(c.whatsapp) + '"></label>' +
+      '<label class="f full">Adresse<input name="address" value="' + esc(c.address) + '"></label>' +
+      '<label class="f full">Notes<textarea name="notes" rows="2">' + esc(c.notes) + '</textarea></label></div>');
+    const get = function (n) { return $('[name="' + n + '"]', body).value.trim(); };
+    openModal(client ? 'Modifier le client' : 'Nouveau client', body, {
+      submitLabel: 'Enregistrer',
+      onSubmit: async function () {
+        if (!get('name')) throw new Error('Le nom est obligatoire.');
+        const payload = {
+          name: get('name'), client_type: get('client_type'), organization: get('organization') || null,
+          contact_person: get('contact_person') || null, phone: get('phone') || null,
+          whatsapp: get('whatsapp') || null, address: get('address') || null, notes: get('notes') || null
+        };
+        const r = client ? await sb.from('clients').update(payload).eq('id', client.id)
+          : await sb.from('clients').insert(payload);
+        if (r.error) throw r.error;
+        await loadClients();
+        if (state.tab === 'clients') renderClients();
+        toast('Client enregistré.');
+      }
+    });
+  }
+
+  /* ---------------------------- TARIFS ---------------------------- */
+  function renderTiers() {
+    const view = $('#view');
+    view.innerHTML =
+      '<div class="view-head"><h2>Tarifs</h2><button class="btn" id="new-tier">+ Nouveau tarif</button></div>' +
+      '<p class="hint">Le prix unitaire se remplit tout seul dans les devis selon le type de client et la quantité. ' +
+      'Un tarif sans type de client vaut pour tout le monde ; un tarif propre à un type prime sur lui. ' +
+      'Vous pouvez toujours modifier le prix à la main dans un devis.</p><div id="t-list"></div>';
+    $('#new-tier').addEventListener('click', function () { openTierModal(null); });
+    $('#t-list').addEventListener('click', function (e) {
+      const b = e.target.closest('[data-id]');
+      if (!b) return;
+      openTierModal(state.tiers.find(function (t) { return t.id === b.getAttribute('data-id'); }));
+    });
+    $('#t-list').innerHTML = state.tiers.length ? state.tiers.map(function (t) {
+      const range = t.max_qty == null ? t.min_qty + ' et plus' : t.min_qty + ' à ' + t.max_qty;
+      return '<article class="card"><div class="card-top"><strong>' + esc(t.label) + '</strong>' +
+        '<span class="badge ' + (t.active ? '' : 'st-inactif') + '">' + (t.active ? 'Actif' : 'Désactivé') + '</span></div>' +
+        '<div class="card-meta"><span>Client : <b>' + esc(t.client_type ? CLIENT_TYPES[t.client_type] : 'Tous') + '</b></span>' +
+        '<span>Quantité : <b>' + esc(range) + '</b></span><span>Prix : <b>' + money(t.unit_price) + ' / unité</b></span></div>' +
+        '<div class="card-actions"><button class="btn btn-small btn-ghost" data-id="' + esc(t.id) + '">Modifier</button></div></article>';
+    }).join('') : '<p class="empty">Aucun tarif.</p>';
+  }
+
+  function openTierModal(tier) {
+    const t = tier || { active: true, min_qty: 1 };
+    const typeOpts = '<option value="">Tous les clients</option>' + options(CLIENT_TYPES, t.client_type);
+    const body = h(
+      '<div class="form-grid">' +
+      '<label class="f full">Nom du tarif *<input name="label" required value="' + esc(t.label) + '" placeholder="Ex : Tarif école 50 à 199"></label>' +
+      '<label class="f full">Type de client<select name="client_type">' + typeOpts + '</select></label>' +
+      '<label class="f">Quantité minimale<input name="min_qty" type="number" min="1" inputmode="numeric" value="' + esc(t.min_qty) + '"></label>' +
+      '<label class="f">Quantité maximale (vide = sans limite)<input name="max_qty" type="number" min="1" inputmode="numeric" value="' + esc(t.max_qty) + '"></label>' +
+      '<label class="f full">Prix unitaire (FCFA) *<input name="unit_price" type="number" min="0" inputmode="numeric" required value="' + esc(t.unit_price) + '"></label>' +
+      '<label class="f check full"><input type="checkbox" name="active"' + (t.active ? ' checked' : '') + '> Tarif actif</label></div>');
+    const get = function (n) { return $('[name="' + n + '"]', body); };
+    openModal(tier ? 'Modifier le tarif' : 'Nouveau tarif', body, {
+      submitLabel: 'Enregistrer',
+      onSubmit: async function () {
+        const label = get('label').value.trim();
+        const min = parseInt(get('min_qty').value, 10);
+        const maxRaw = get('max_qty').value.trim();
+        const max = maxRaw === '' ? null : parseInt(maxRaw, 10);
+        const price = parseInt(get('unit_price').value, 10);
+        if (!label) throw new Error('Le nom du tarif est obligatoire.');
+        if (!(min >= 1)) throw new Error('La quantité minimale doit être au moins 1.');
+        if (max !== null && max < min) throw new Error('La quantité maximale doit être supérieure à la minimale.');
+        if (!(price >= 0)) throw new Error('Indiquez un prix valide.');
+        const payload = {
+          label: label, client_type: get('client_type').value || null, min_qty: min, max_qty: max,
+          unit_price: price, active: get('active').checked
+        };
+        const r = tier ? await sb.from('price_tiers').update(payload).eq('id', tier.id)
+          : await sb.from('price_tiers').insert(payload);
+        if (r.error) throw r.error;
+        await loadTiers();
+        if (state.tab === 'tarifs') renderTiers();
+        toast('Tarif enregistré.');
+      }
+    });
+  }
+
+  /* ---------------------------- DEVIS : liste ---------------------------- */
+  function renderQuotes() {
+    const view = $('#view');
+    view.innerHTML =
+      '<div class="view-head"><h2>Devis</h2><button class="btn" id="new-quote">+ Nouveau devis</button></div>' +
+      '<div class="filters"><input id="q-search" type="search" placeholder="Rechercher (numéro ou client)">' +
+      '<select id="q-status"><option value="">Tous les statuts</option>' + options(QUOTE_STATUS, '') + '</select></div>' +
+      '<div id="q-list"></div>';
+    $('#new-quote').addEventListener('click', function () {
+      if (!state.clients.length) { toast("Créez d'abord un client (onglet Clients).", true); return; }
+      openQuoteModal(null);
+    });
+    $('#q-search').addEventListener('input', renderQuoteList);
+    $('#q-status').addEventListener('change', renderQuoteList);
+    $('#q-list').addEventListener('click', function (e) {
+      const b = e.target.closest('[data-act]');
+      if (!b) return;
+      const q = state.quotes.find(function (x) { return x.id === b.getAttribute('data-id'); });
+      if (!q) return;
+      if (b.getAttribute('data-act') === 'pdf') makePdf(q); else openQuoteModal(q);
+    });
+    renderQuoteList();
+  }
+
+  function renderQuoteList() {
+    const term = $('#q-search').value.trim().toLowerCase();
+    const st = $('#q-status').value;
+    const rows = state.quotes.filter(function (q) {
+      const name = ((q.clients && q.clients.name) || '').toLowerCase();
+      return (!st || q.status === st) && (!term || (q.quote_number || '').toLowerCase().includes(term) || name.includes(term));
+    });
+    $('#q-list').innerHTML = rows.length ? rows.map(function (q) {
+      return '<article class="card"><div class="card-top"><strong>' + esc(q.quote_number) + '</strong>' +
+        '<span class="badge st-' + esc(q.status) + '">' + esc(QUOTE_STATUS[q.status] || q.status) + '</span></div>' +
+        '<div class="card-client">' + esc(q.clients ? q.clients.name : '') + '</div>' +
+        '<div class="card-meta"><span>Total : <b>' + money(quoteTotal(q)) + '</b></span>' +
+        '<span>Valable jusqu\'au ' + esc(fmtDateOnly(q.valid_until)) + '</span></div>' +
+        '<div class="card-actions"><button class="btn btn-small" data-act="open" data-id="' + esc(q.id) + '">Ouvrir</button>' +
+        '<button class="btn btn-small btn-ghost" data-act="pdf" data-id="' + esc(q.id) + '">PDF</button></div></article>';
+    }).join('') : '<p class="empty">Aucun devis pour le moment.</p>';
+  }
+
+  /* ---------------------------- DEVIS : éditeur ---------------------------- */
+  function openQuoteModal(quote) {
+    const isNew = !quote;
+    const q = quote || {
+      status: 'brouillon', discount: 0, extra_fees: 0, valid_until: addDays(C.QUOTE_VALIDITY_DAYS),
+      delivery_estimate: C.DELIVERY_DEFAULT || '', notes: '', quote_items: [], client_id: ''
+    };
+    const locked = !isNew && EDITABLE_STATUS.indexOf(q.status) === -1;
+    const dis = locked ? ' disabled' : '';
+
+    const clientOpts = '<option value="">— Choisir un client —</option>' + state.clients.map(function (c) {
+      return '<option value="' + esc(c.id) + '"' + (c.id === q.client_id ? ' selected' : '') + '>' + esc(c.name) + '</option>';
+    }).join('');
+
+    const body = h(
+      '<div>' +
+      (locked ? '<div class="note">Ce devis est verrouillé (' + esc(QUOTE_STATUS[q.status]) + '). Pour le modifier, repassez-le d\'abord en « Envoyé » puis enregistrez.</div>' : '') +
+      '<div class="form-grid">' +
+      '<label class="f full">Client *<select name="client_id"' + dis + '>' + clientOpts + '</select></label>' +
+      '<label class="f">Valable jusqu\'au<input type="date" name="valid_until" value="' + esc(q.valid_until) + '"' + dis + '></label>' +
+      '<label class="f">Statut<select name="status">' + options(QUOTE_STATUS, q.status) + '</select></label>' +
+      '<label class="f full">Délai estimatif<input name="delivery_estimate" value="' + esc(q.delivery_estimate) + '"' + dis + '></label></div>' +
+      '<h4>Articles</h4><div id="lines"></div>' +
+      (locked ? '' : '<button type="button" class="btn btn-ghost btn-small" id="add-line">+ Ajouter une ligne</button>') +
+      '<div class="form-grid" style="margin-top:14px">' +
+      '<label class="f">Remise (FCFA)<input type="number" name="discount" min="0" inputmode="numeric" value="' + esc(q.discount) + '"' + dis + '></label>' +
+      '<label class="f">Frais supplémentaires (FCFA)<input type="number" name="extra_fees" min="0" inputmode="numeric" value="' + esc(q.extra_fees) + '"' + dis + '></label>' +
+      '<label class="f full">Notes<textarea name="notes" rows="2"' + dis + '>' + esc(q.notes) + '</textarea></label></div>' +
+      '<div class="totals"><div><span>Sous-total</span><span id="t-sub"></span></div>' +
+      '<div><span>Remise</span><span id="t-disc"></span></div><div><span>Frais supplémentaires</span><span id="t-fees"></span></div>' +
+      '<div class="grand"><span>Total</span><span id="t-total"></span></div></div></div>');
+
+    const field = function (n) { return $('[name="' + n + '"]', body); };
+    const linesBox = $('#lines', body);
+
+    function currentClientType() {
+      const c = state.clients.find(function (x) { return x.id === field('client_id').value; });
+      return c ? c.client_type : null;
+    }
+
+    function readLine(el) {
+      return {
+        el: el,
+        description: $('.l-desc', el).value.trim(),
+        quantity: parseInt($('.l-qty', el).value, 10),
+        unit_price: parseInt($('.l-price', el).value, 10),
+        reason: $('.l-reason', el).value.trim()
+      };
+    }
+
+    function updateTotals() {
+      let sub = 0;
+      $$('.line', linesBox).forEach(function (el) {
+        const l = readLine(el);
+        const tot = (l.quantity > 0 && l.unit_price >= 0) ? l.quantity * l.unit_price : 0;
+        $('.l-total', el).textContent = 'Total ligne : ' + money(tot);
+        sub += tot;
+      });
+      const disc = parseInt(field('discount').value, 10) || 0;
+      const fees = parseInt(field('extra_fees').value, 10) || 0;
+      $('#t-sub', body).textContent = money(sub);
+      $('#t-disc', body).textContent = '- ' + money(disc);
+      $('#t-fees', body).textContent = '+ ' + money(fees);
+      $('#t-total', body).textContent = money(sub - disc + fees);
+    }
+
+    // Met à jour l'indication de tarif d'une ligne ; applique le prix si la ligne n'est pas modifiée à la main
+    function refreshLine(el, applyPrice) {
+      const qty = parseInt($('.l-qty', el).value, 10);
+      const priceInput = $('.l-price', el);
+      const hint = $('.l-hint', el);
+      const reason = $('.l-reason', el);
+      if (!field('client_id').value) {
+        hint.textContent = 'Choisissez un client pour appliquer le tarif automatiquement.';
+        reason.classList.add('hidden');
+        return;
+      }
+      const tier = suggestTier(currentClientType(), qty);
+      if (!tier) {
+        hint.textContent = 'Aucun tarif correspondant : saisissez le prix à la main.';
+        reason.classList.add('hidden');
+        el.dataset.manual = '';
+        return;
+      }
+      if (applyPrice && !el.dataset.manual) priceInput.value = tier.unit_price;
+      const price = parseInt(priceInput.value, 10);
+      const overridden = price !== tier.unit_price;
+      el.dataset.manual = overridden ? '1' : '';
+      hint.textContent = 'Tarif : ' + tier.label + ' (' + money(tier.unit_price) + ' / unité)' + (overridden ? ' — prix modifié à la main' : '');
+      reason.classList.toggle('hidden', !overridden);
+    }
+
+    function addLine(data) {
+      const d = data || { quantity: 1, description: '' };
+      const el = h(
+        '<div class="line">' +
+        '<label class="f">Description<input class="l-desc" value="' + esc(d.description) + '" placeholder="Ex : T-shirt blanc, flocage 1 couleur"' + dis + '></label>' +
+        '<div class="line-nums">' +
+        '<label class="f">Quantité<input class="l-qty" type="number" min="1" inputmode="numeric" value="' + esc(d.quantity) + '"' + dis + '></label>' +
+        '<label class="f">Prix unitaire (FCFA)<input class="l-price" type="number" min="0" inputmode="numeric" value="' + esc(d.unit_price) + '"' + dis + '></label>' +
+        '<div class="l-total"></div></div>' +
+        '<div class="l-hint"></div>' +
+        '<input class="l-reason hidden" placeholder="Raison du changement de prix (facultatif)" value="' + esc(d.price_override_reason) + '"' + dis + '>' +
+        (locked ? '' : '<div class="card-actions"><button type="button" class="btn btn-small btn-ghost l-del">Retirer la ligne</button></div>') +
+        '</div>');
+      $('.l-qty', el).addEventListener('input', function () { refreshLine(el, true); updateTotals(); });
+      $('.l-price', el).addEventListener('input', function () {
+        el.dataset.manual = '1';          // le prix a été saisi : refreshLine recalcule l'état réel
+        refreshLine(el, false); updateTotals();
+      });
+      const del = $('.l-del', el);
+      if (del) del.addEventListener('click', function () {
+        if ($$('.line', linesBox).length > 1) { el.remove(); updateTotals(); } else toast('Il faut au moins une ligne.', true);
+      });
+      linesBox.appendChild(el);
+      refreshLine(el, !d.unit_price && d.unit_price !== 0);
+      updateTotals();
+    }
+
+    (q.quote_items.length ? q.quote_items : [null]).forEach(function (it) { addLine(it); });
+    const addBtn = $('#add-line', body);
+    if (addBtn) addBtn.addEventListener('click', function () { addLine(null); });
+    field('client_id').addEventListener('change', function () {
+      $$('.line', linesBox).forEach(function (el) { refreshLine(el, true); });
+      updateTotals();
+    });
+    field('discount').addEventListener('input', updateTotals);
+    field('extra_fees').addEventListener('input', updateTotals);
+
+    const buttons = [];
+    if (!isNew) {
+      const pdfBtn = document.createElement('button');
+      pdfBtn.type = 'button'; pdfBtn.className = 'btn btn-ghost'; pdfBtn.textContent = 'PDF (version enregistrée)';
+      pdfBtn.addEventListener('click', function () { makePdf(q); });
+      buttons.push(pdfBtn);
+    }
+
+    openModal(isNew ? 'Nouveau devis' : q.quote_number, body, {
+      buttons: buttons,
+      submitLabel: 'Enregistrer',
+      onSubmit: async function () {
+        // Devis verrouillé : seul le statut peut changer
+        if (locked) {
+          const r0 = await sb.from('quotes').update({ status: field('status').value }).eq('id', q.id);
+          if (r0.error) throw r0.error;
+          await loadQuotes(); renderQuotes(); toast('Statut mis à jour.');
+          return true;
+        }
+        const clientId = field('client_id').value;
+        if (!clientId) throw new Error('Choisissez un client.');
+        const lines = $$('.line', linesBox).map(readLine);
+        lines.forEach(function (l, i) {
+          if (!l.description) throw new Error('Ligne ' + (i + 1) + ' : ajoutez une description.');
+          if (!(l.quantity >= 1)) throw new Error('Ligne ' + (i + 1) + ' : la quantité doit être au moins 1.');
+          if (!(l.unit_price >= 0)) throw new Error('Ligne ' + (i + 1) + ' : indiquez le prix unitaire.');
+        });
+        const discount = parseInt(field('discount').value, 10) || 0;
+        const fees = parseInt(field('extra_fees').value, 10) || 0;
+        const sub = lines.reduce(function (s, l) { return s + l.quantity * l.unit_price; }, 0);
+        if (discount > sub + fees) throw new Error('La remise ne peut pas dépasser le montant du devis.');
+
+        const header = {
+          client_id: clientId, status: field('status').value,
+          valid_until: field('valid_until').value || null,
+          delivery_estimate: field('delivery_estimate').value.trim() || null,
+          discount: discount, extra_fees: fees, notes: field('notes').value.trim() || null
+        };
+        const items = function (quoteId) {
+          return lines.map(function (l) {
+            const manual = !!l.el.dataset.manual;
+            return {
+              quote_id: quoteId, description: l.description, quantity: l.quantity, unit_price: l.unit_price,
+              price_override_reason: manual && l.reason ? l.reason : null
+            };
+          });
+        };
+
+        let saved;
+        if (isNew) {
+          const r = await sb.from('quotes').insert(header).select().single();
+          if (r.error) throw r.error;
+          saved = r.data;
+          const ri = await sb.from('quote_items').insert(items(saved.id));
+          if (ri.error) {
+            await sb.from('quotes').delete().eq('id', saved.id);   // évite un devis vide
+            throw ri.error;
+          }
+        } else {
+          const r = await sb.from('quotes').update(header).eq('id', q.id).select().single();
+          if (r.error) throw r.error;
+          saved = r.data;
+          const oldIds = q.quote_items.map(function (i) { return i.id; });
+          const ri = await sb.from('quote_items').insert(items(q.id));   // nouvelles lignes d'abord
+          if (ri.error) throw ri.error;
+          if (oldIds.length) {
+            const rd = await sb.from('quote_items').delete().in('id', oldIds);
+            if (rd.error) throw rd.error;
+          }
+        }
+        await loadQuotes();
+        renderQuotes();
+        toast('Devis enregistré : ' + saved.quote_number);
+        return true;
+      }
+    });
+  }
+
+  /* ---------------------------- DEVIS : PDF ---------------------------- */
+  function makePdf(q) {
+    if (!window.jspdf) { toast('Le module PDF n\'a pas pu se charger. Vérifiez votre connexion.', true); return; }
+    const doc = new window.jspdf.jsPDF({ unit: 'mm', format: 'a4' });
+    const W = 210, M = 15, green = [31, 107, 70], ink = [23, 38, 30], gray = [102, 122, 112];
+    const client = q.clients || {};
+    const items = q.quote_items || [];
+
+    // En-tête
+    doc.setFillColor(green[0], green[1], green[2]); doc.rect(0, 0, W, 36, 'F');
+    doc.setTextColor(255, 255, 255);
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(20); doc.text(C.COMPANY.name, M, 16);
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(10);
+    doc.text(C.COMPANY.tagline || '', M, 23);
+    doc.text([C.COMPANY.address, C.COMPANY.phone, C.COMPANY.email].filter(Boolean).join('   |   '), M, 30);
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(20); doc.text('DEVIS', W - M, 16, { align: 'right' });
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(10);
+    doc.text(q.quote_number || '', W - M, 23, { align: 'right' });
+    doc.text('Date : ' + fmtDateTs(q.created_at), W - M, 30, { align: 'right' });
+
+    // Client
+    let y = 48;
+    doc.setTextColor(gray[0], gray[1], gray[2]); doc.setFontSize(9); doc.text('CLIENT', M, y);
+    doc.setTextColor(ink[0], ink[1], ink[2]); doc.setFont('helvetica', 'bold'); doc.setFontSize(12);
+    y += 6; doc.text(client.name || '', M, y);
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(10);
+    [client.organization, client.contact_person ? 'À l\'attention de : ' + client.contact_person : '',
+      client.phone ? 'Tél : ' + client.phone : '', client.address].filter(Boolean).forEach(function (l) {
+      y += 5; doc.text(String(l), M, y);
+    });
+
+    // Tableau des articles
+    y += 12;
+    const colQty = 118, colPrice = 156, colTot = W - M - 2;
+    function tableHead() {
+      doc.setFillColor(230, 244, 236); doc.rect(M, y, W - 2 * M, 8, 'F');
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(9); doc.setTextColor(green[0], green[1], green[2]);
+      doc.text('Description', M + 2, y + 5.5);
+      doc.text('Qté', colQty, y + 5.5, { align: 'right' });
+      doc.text('Prix unitaire', colPrice, y + 5.5, { align: 'right' });
+      doc.text('Total', colTot, y + 5.5, { align: 'right' });
+      y += 8;
+    }
+    tableHead();
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(10); doc.setTextColor(ink[0], ink[1], ink[2]);
+    items.forEach(function (it) {
+      const lines = doc.splitTextToSize(String(it.description), 88);
+      const rowH = lines.length * 5 + 3;
+      if (y + rowH > 262) { doc.addPage(); y = 20; tableHead(); doc.setFont('helvetica', 'normal'); doc.setFontSize(10); doc.setTextColor(ink[0], ink[1], ink[2]); }
+      doc.text(lines, M + 2, y + 5);
+      doc.text(String(it.quantity), colQty, y + 5, { align: 'right' });
+      doc.text(fmt(it.unit_price), colPrice, y + 5, { align: 'right' });
+      doc.text(fmt(it.quantity * it.unit_price), colTot, y + 5, { align: 'right' });
+      y += rowH;
+      doc.setDrawColor(219, 230, 223); doc.line(M, y, W - M, y);
+    });
+
+    // Totaux
+    if (y > 235) { doc.addPage(); y = 20; }
+    y += 8;
+    const sub = subTotal(items);
+    function totalLine(label, value, bold) {
+      doc.setFont('helvetica', bold ? 'bold' : 'normal'); doc.setFontSize(bold ? 12 : 10);
+      doc.text(label, 128, y); doc.text(value, colTot, y, { align: 'right' }); y += bold ? 7 : 6;
+    }
+    totalLine('Sous-total', fmt(sub) + ' FCFA', false);
+    if (Number(q.discount) > 0) totalLine('Remise', '- ' + fmt(q.discount) + ' FCFA', false);
+    if (Number(q.extra_fees) > 0) totalLine('Frais supplémentaires', fmt(q.extra_fees) + ' FCFA', false);
+    doc.setDrawColor(green[0], green[1], green[2]); doc.line(128, y - 3, colTot, y - 3); y += 2;
+    doc.setTextColor(green[0], green[1], green[2]);
+    totalLine('TOTAL', fmt(quoteTotal(q)) + ' FCFA', true);
+    doc.setTextColor(ink[0], ink[1], ink[2]);
+
+    // Conditions
+    y += 6;
+    const cond = [
+      ['Conditions de paiement', C.PAYMENT_TERMS],
+      ['Délai estimatif', q.delivery_estimate],
+      ['Validité du devis', q.valid_until ? 'Valable jusqu\'au ' + fmtDateOnly(q.valid_until) : ''],
+      ['Remarques', q.notes]
+    ].filter(function (c) { return c[1]; });
+    cond.forEach(function (c) {
+      const txt = doc.splitTextToSize(String(c[1]), W - 2 * M - 4);
+      if (y + txt.length * 5 + 8 > 280) { doc.addPage(); y = 20; }
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(10); doc.text(c[0], M, y); y += 5;
+      doc.setFont('helvetica', 'normal'); doc.text(txt, M + 2, y); y += txt.length * 5 + 3;
+    });
+
+    // Pied de page
+    const pages = doc.getNumberOfPages();
+    for (let p = 1; p <= pages; p++) {
+      doc.setPage(p); doc.setFontSize(8); doc.setTextColor(gray[0], gray[1], gray[2]);
+      doc.text(C.COMPANY.name + ' - ' + (q.quote_number || '') + ' - Page ' + p + '/' + pages, W / 2, 290, { align: 'center' });
+    }
+    doc.save((q.quote_number || 'devis') + '.pdf');
+  }
+
+  /* ---------------------------- Démarrage ---------------------------- */
+  async function start() {
+    const s = await sb.auth.getSession();
+    const session = s.data && s.data.session;
+    if (!session) { renderLogin(state.loginMsg); state.loginMsg = ''; return; }
+    state.user = session.user;
+    const p = await sb.from('profiles').select('full_name, role, active').eq('id', session.user.id).maybeSingle();
+    if (p.error || !p.data || !p.data.active) {
+      logout('Ce compte est désactivé ou introuvable. Contactez l\'administrateur.');
+      return;
+    }
+    state.profile = p.data;
+    if (p.data.role !== 'admin') { renderOperatorHome(); return; }
+    renderShell();
+    $('#view').innerHTML = '<p class="empty">Chargement…</p>';
+    try {
+      await Promise.all([loadClients(), loadTiers(), loadQuotes()]);
+    } catch (e) {
+      toast(errMsg(e), true);
+    }
+    showTab(state.tab);
+  }
+
+  sb.auth.onAuthStateChange(function (event) {
+    if (event === 'SIGNED_OUT') { renderLogin(state.loginMsg); state.loginMsg = ''; }
+  });
+  start();
+})();
