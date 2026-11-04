@@ -261,7 +261,8 @@
       '<button class="tab" data-tab="devis">Devis</button>' +
       '<button class="tab" data-tab="commandes">Commandes</button>' +
       '<button class="tab" data-tab="clients">Clients</button>' +
-      '<button class="tab" data-tab="tarifs">Tarifs</button></nav>' +
+      '<button class="tab" data-tab="tarifs">Tarifs</button>' +
+      '<button class="tab" data-tab="sauvegarde">Sauvegarde' + (backupOverdue() ? ' <span aria-label="à faire" title="Sauvegarde à faire">&#9888;</span>' : '') + '</button></nav>' +
       '<main id="view"></main>';
     $('#logout').addEventListener('click', function () { logout(); });
     $$('.tab').forEach(function (b) {
@@ -275,7 +276,107 @@
     if (tab === 'devis') renderQuotes();
     else if (tab === 'commandes') renderOrders();
     else if (tab === 'clients') renderClients();
+    else if (tab === 'sauvegarde') renderBackup();
     else renderTiers();
+  }
+
+  /* ---------------------------- SAUVEGARDE ---------------------------- */
+  const BACKUP_TABLES = ['clients', 'price_tiers', 'quotes', 'quote_items', 'orders', 'order_items',
+    'payments', 'order_status_history', 'order_visuals', 'order_visual_events'];
+  const BACKUP_KEY = 'nexus_last_backup';
+  const BACKUP_DAYS = 7;
+
+  function lastBackup() {
+    try { const v = window.localStorage.getItem(BACKUP_KEY); return v ? new Date(v) : null; } catch (e) { return null; }
+  }
+  function markBackup() {
+    try { window.localStorage.setItem(BACKUP_KEY, new Date().toISOString()); } catch (e) { /* sans importance */ }
+  }
+  function backupOverdue() {
+    const d = lastBackup();
+    return !d || (Date.now() - d.getTime()) > BACKUP_DAYS * 86400000;
+  }
+  // La base renvoie au plus 1000 lignes par demande : on lit page par page
+  async function fetchAll(table) {
+    const rows = [];
+    for (let from = 0; ; from += 1000) {
+      const r = await sb.from(table).select('*').order('id').range(from, from + 999);
+      if (r.error) throw r.error;
+      rows.push.apply(rows, r.data);
+      if (r.data.length < 1000) break;
+    }
+    return rows;
+  }
+  function download(filename, text, mime) {
+    const blob = new Blob([text], { type: mime });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(function () { URL.revokeObjectURL(url); }, 4000);
+  }
+  function csvCell(v) {
+    if (v == null) return '';
+    let t = String(v);
+    if (typeof v === 'string' && /^[=+\-@\t\r]/.test(t)) t = "'" + t;   // évite qu'Excel exécute une formule
+    return /[";\n\r]/.test(t) ? '"' + t.replace(/"/g, '""') + '"' : t;
+  }
+  function stamp() { return new Date().toISOString().slice(0, 10); }
+
+  function renderBackup() {
+    const view = $('#view');
+    const d = lastBackup();
+    const overdue = backupOverdue();
+    const when = d ? 'le ' + fmtDateTime(d.toISOString()) : 'jamais (sur cet appareil)';
+    view.innerHTML =
+      '<div class="view-head"><h2>Sauvegarde</h2></div>' +
+      '<p class="sv-note ' + (overdue ? 'note' : 'ok-note') + '">Dernière sauvegarde : <b>' + esc(when) + '</b>.' +
+      (overdue ? ' Faites-en une maintenant, puis une fois par semaine.' : '') + '</p>' +
+      '<div class="card"><h3>Sauvegarde complète</h3>' +
+      '<p class="hint">Un fichier avec tous vos clients, tarifs, devis, commandes, paiements et preuves de validation. À garder en lieu sûr (ordinateur, clé USB ou Drive personnel).</p>' +
+      '<div class="card-actions"><button class="btn" id="bk-json">Télécharger la sauvegarde</button></div></div>' +
+      '<div class="card"><h3>Paiements pour Excel</h3>' +
+      '<p class="hint">La liste de tous les paiements encaissés (date, reçu, client, montant, mode), à ouvrir dans Excel pour votre comptabilité.</p>' +
+      '<div class="card-actions"><button class="btn btn-ghost" id="bk-csv">Télécharger les paiements (Excel)</button></div></div>' +
+      '<p class="hint">Attention : ces fichiers contiennent des informations privées de vos clients et les liens de suivi. Ne les envoyez à personne et ne les mettez jamais sur GitHub. ' +
+      'Les images des visuels ne sont pas dans la sauvegarde : gardez aussi les fichiers d\'origine.</p>';
+
+    $('#bk-json').addEventListener('click', async function () {
+      const btn = this; btn.disabled = true; btn.textContent = 'Préparation…';
+      try {
+        const data = { app: 'Nexus Numérique', exported_at: new Date().toISOString(), tables: {} };
+        for (const t of BACKUP_TABLES) data.tables[t] = await fetchAll(t);
+        download('nexus-sauvegarde-' + stamp() + '.json', JSON.stringify(data, null, 2), 'application/json');
+        markBackup();
+        const n = BACKUP_TABLES.reduce(function (s, t) { return s + data.tables[t].length; }, 0);
+        toast('Sauvegarde téléchargée (' + n + ' enregistrements).');
+        renderShell(); showTab('sauvegarde');
+      } catch (err) {
+        toast('Sauvegarde impossible : ' + errMsg(err), true);
+        btn.disabled = false; btn.textContent = 'Télécharger la sauvegarde';
+      }
+    });
+
+    $('#bk-csv').addEventListener('click', async function () {
+      const btn = this; btn.disabled = true;
+      try {
+        await loadOrders();
+        const head = ['Date', 'N° reçu', 'Commande', 'Client', 'Type', 'Mode', 'Montant (FCFA)', 'Référence'];
+        const rows = [];
+        state.orders.forEach(function (o) {
+          (o.payments || []).forEach(function (p) {
+            rows.push([p.paid_at, p.receipt_number, o.order_number, o.clients ? o.clients.name : '',
+              PAY_KINDS[p.kind] || p.kind, PAY_METHODS[p.method] || p.method, p.amount, p.reference || '']);
+          });
+        });
+        rows.sort(function (a, b) { return String(a[0]).localeCompare(String(b[0])) || String(a[1]).localeCompare(String(b[1])); });
+        const csv = '﻿' + [head].concat(rows).map(function (r) { return r.map(csvCell).join(';'); }).join('\r\n');
+        download('nexus-paiements-' + stamp() + '.csv', csv, 'text/csv;charset=utf-8');
+        toast(rows.length + ' paiement(s) exporté(s).');
+      } catch (err) {
+        toast('Export impossible : ' + errMsg(err), true);
+      } finally { btn.disabled = false; }
+    });
   }
 
   /* ---------------------------- CLIENTS ---------------------------- */
