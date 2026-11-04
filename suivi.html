@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="fr" translate="no">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="google" content="notranslate">
+<meta name="robots" content="noindex, nofollow">
+<meta name="referrer" content="no-referrer">
+<meta name="theme-color" content="#1f6b46">
+<title>Suivi de commande — Nexus Numérique</title>
+<link rel="stylesheet" href="gestion.css">
+<style>
+  .sv-head{background:linear-gradient(160deg,var(--g900),var(--g700)); color:#fff; padding:22px 16px 26px;}
+  .sv-head .in{max-width:640px; margin:0 auto;}
+  .sv-head .brand-mark{background:#fff; color:var(--g700); margin-bottom:10px;}
+  .sv-head h1{font-size:1.25rem; line-height:1.25;}
+  .sv-head p{opacity:.85; font-size:.92rem; margin-top:4px;}
+  .sv-wrap{max-width:640px; margin:-14px auto 0; padding:0 16px 60px;}
+  .sv-card{background:var(--card); border:1px solid var(--line); border-radius:var(--radius); padding:16px; margin-bottom:12px; box-shadow:0 8px 24px -18px rgba(0,0,0,.35);}
+  .sv-card h2{font-size:1.05rem; margin-bottom:10px;}
+  .steps{list-style:none;}
+  .steps li{display:flex; gap:12px; align-items:center; padding:7px 0; color:var(--mute);}
+  .steps .dot{width:22px; height:22px; border-radius:50%; border:2px solid var(--line); flex:none; display:grid; place-items:center; font-size:.7rem; color:#fff;}
+  .steps li.done{color:var(--ink);} .steps li.done .dot{background:var(--g500); border-color:var(--g500);}
+  .steps li.now{color:var(--g900); font-weight:700;} .steps li.now .dot{border-color:var(--g700); background:var(--g100); box-shadow:0 0 0 4px var(--g100);}
+  .sv-visual{display:block; max-width:100%; max-height:420px; margin:0 auto 12px; border-radius:12px; border:1px solid var(--line);}
+  .sv-pdf{display:block; text-align:center; padding:26px 10px; border:1px dashed var(--g500); border-radius:12px; margin-bottom:12px; font-weight:700;}
+  .sv-actions{display:grid; gap:10px; margin-top:12px;}
+  .sv-actions .btn{width:100%;}
+  .btn-warn{background:var(--warn);} .btn-warn:hover{background:#92400e;}
+  .sv-msg{padding:12px 14px; border-radius:12px; margin-bottom:12px; font-size:.95rem;}
+  .sv-ok{background:var(--g100); color:var(--g900);} .sv-warn{background:var(--warn-bg); color:var(--warn);} .sv-bad{background:var(--bad-bg); color:var(--bad);}
+  .sv-center{text-align:center; padding:60px 20px; color:var(--mute);}
+  .sv-foot{text-align:center; color:var(--mute); font-size:.85rem; margin-top:18px;}
+</style>
+</head>
+<body>
+<div id="app"><p class="sv-center">Chargement…</p></div>
+<div id="toast" role="status" aria-live="polite"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="gestion-config.js"></script>
+<script src="suivi.js"></script>
+</body>
+</html>

@@ -31,6 +31,15 @@
   const ORDER_CLOSED = ['livree', 'soldee', 'terminee', 'annulee'];   // plus de retard possible
   const PAY_METHODS = { especes: 'Espèces', mobile_money: 'Mobile Money', virement: 'Virement', autre: 'Autre' };
   const PAY_KINDS = { acompte: 'Acompte', paiement: 'Paiement', solde: 'Solde' };
+  // Validation du visuel par le client
+  const VISUAL_STATUS = {
+    en_attente: 'En attente du client', valide: 'Validé par le client',
+    modification_demandee: 'Modification demandée', remplace: 'Remplacé par une version plus récente'
+  };
+  const VISUAL_BADGE = { en_attente: 'st-envoye', valide: 'st-accepte', modification_demandee: 'st-expire', remplace: 'st-inactif' };
+  const VISUAL_REOPENABLE = ['devis_accepte', 'acompte_recu', 'visuel_validation', 'visuel_valide'];  // avant la production
+  const VISUAL_MIME = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'application/pdf': 'pdf' };
+  const VISUAL_MAX = 5 * 1024 * 1024;   // 5 Mo
 
   const state = { user: null, profile: null, tab: 'devis', clients: [], tiers: [], quotes: [], orders: [], loginMsg: '' };
 
@@ -149,10 +158,33 @@
   }
   async function loadOrders() {
     const r = await sb.from('orders')
-      .select('*, clients(id,name,client_type,phone,whatsapp), order_items(id,description,quantity), payments(id,amount,kind,method,reference,paid_at,note,receipt_number,created_at), quotes(quote_number)')
+      .select('*, clients(id,name,client_type,phone,whatsapp), order_items(id,description,quantity), payments(id,amount,kind,method,reference,paid_at,note,receipt_number,created_at), quotes(quote_number), order_visuals(id,version,file_path,file_name,status,client_name,client_comment,decided_at,created_at)')
       .order('created_at', { ascending: false });
     if (r.error) throw r.error;
     state.orders = r.data.map(function (o) { o.quote = one(o.quotes); return o; });
+  }
+
+  /* ---------------------- Visuels et lien de suivi ---------------------- */
+  // Dernière version du visuel (celle que le client doit valider)
+  function latestVisual(o) {
+    const list = (o.order_visuals || []).filter(function (v) { return v.status !== 'remplace'; });
+    return list.sort(function (a, b) { return b.version - a.version; })[0] || null;
+  }
+  function visualUrl(path) {
+    return C.SUPABASE_URL.replace(/\/+$/, '') + '/storage/v1/object/public/visuels/' + String(path).split('/').map(encodeURIComponent).join('/');
+  }
+  // Adresse de la page client : même dossier que cette page, fichier suivi.html
+  function trackingUrl(o) {
+    const u = new URL('suivi.html', window.location.href);
+    u.search = '?t=' + o.tracking_token;
+    u.hash = '';
+    return u.toString();
+  }
+  function randomId() {
+    if (window.crypto && window.crypto.randomUUID) return window.crypto.randomUUID();
+    const a = new Uint8Array(16);
+    window.crypto.getRandomValues(a);
+    return Array.prototype.map.call(a, function (b) { return ('0' + b.toString(16)).slice(-2); }).join('');
   }
 
   /* ---------------------------- Calculs ---------------------------- */
@@ -790,9 +822,11 @@
       const rest = restOf(o);
       const late = isLate(o);
       const wa = o.clients ? waLink(o.clients.whatsapp || o.clients.phone) : '';
+      const lv = latestVisual(o);
       return '<article class="card' + (late ? ' late' : '') + '"><div class="card-top"><strong>' + esc(o.order_number) + '</strong>' +
         '<span class="badge ' + orderBadge(o.status) + '">' + esc(ORDER_STATUS[o.status] || o.status) + '</span></div>' +
-        '<div class="card-client">' + esc(o.clients ? o.clients.name : '') + (o.priority === 'urgente' ? ' <span class="badge st-expire">Urgente</span>' : '') + '</div>' +
+        '<div class="card-client">' + esc(o.clients ? o.clients.name : '') + (o.priority === 'urgente' ? ' <span class="badge st-expire">Urgente</span>' : '') +
+        (lv ? ' <span class="badge ' + VISUAL_BADGE[lv.status] + '">Visuel : ' + esc(lv.status === 'valide' ? 'validé' : lv.status === 'en_attente' ? 'en attente' : 'modification demandée') + '</span>' : '') + '</div>' +
         '<div class="card-meta"><span>Total : <b>' + money(o.total_amount) + '</b></span>' +
         '<span>Payé : <b>' + money(paidOf(o)) + '</b></span>' +
         '<span>Reste : <b>' + money(rest) + '</b></span>' +
@@ -830,6 +864,47 @@
         '<div class="card-actions"><button type="button" class="btn btn-small" id="pay-add">Ajouter le paiement</button></div></div>'
       : '<p class="hint">' + (o.status === 'annulee' ? 'Commande annulée : aucun paiement à ajouter.' : 'Commande entièrement payée.') + '</p>';
 
+    /* --- Visuel à faire valider par le client --- */
+    const visuals = (o.order_visuals || []).slice().sort(function (a, b) { return b.version - a.version; });
+    const visRows = visuals.length ? visuals.map(function (v) {
+      const url = visualUrl(v.file_path);
+      const isPdf = /\.pdf$/i.test(v.file_path);
+      const old = v.status === 'remplace';
+      const canReopen = (v.status === 'valide' || v.status === 'modification_demandee') && VISUAL_REOPENABLE.indexOf(o.status) !== -1;
+      const thumb = old ? '' : (isPdf
+        ? '<a class="vis-img vis-pdf" href="' + esc(url) + '" target="_blank" rel="noopener">PDF</a>'
+        : '<a href="' + esc(url) + '" target="_blank" rel="noopener"><img class="vis-img" src="' + esc(url) + '" alt="Visuel version ' + esc(v.version) + '" loading="lazy"></a>');
+      let proof = '';
+      if (v.status === 'valide') {
+        proof = '<div class="proof">Validé par <b>' + esc(v.client_name) + '</b> le ' + esc(fmtDateTime(v.decided_at)) + '</div>';
+      } else if (v.status === 'modification_demandee') {
+        proof = '<div class="proof warn">Le client demande : « ' + esc(v.client_comment) + ' » (' + esc(fmtDateTime(v.decided_at)) + ')</div>';
+      }
+      return '<div class="vis' + (old ? ' old' : '') + '">' + thumb + '<div class="vis-info">' +
+        '<div><b>Version ' + esc(v.version) + '</b> <span class="badge ' + VISUAL_BADGE[v.status] + '">' + esc(VISUAL_STATUS[v.status]) + '</span></div>' +
+        '<div class="l-hint">' + esc(v.file_name || '') + ' · envoyé le ' + esc(fmtDateTime(v.created_at)) + '</div>' + proof +
+        (canReopen ? '<button type="button" class="btn btn-small btn-ghost" data-reopen="' + esc(v.id) + '">Rouvrir la validation</button>' : '') +
+        '</div></div>';
+    }).join('') : '<p class="hint">Aucun visuel envoyé pour le moment.</p>';
+    const visualSection = '<h4>Visuel à valider</h4><div id="vis-list">' + visRows + '</div>' +
+      (o.status === 'annulee' ? '' :
+        '<div class="line"><label class="f">' + (visuals.length ? 'Envoyer une nouvelle version (remplace la précédente)' : 'Envoyer le visuel (PNG, JPG, WEBP ou PDF, 5 Mo maximum)') +
+        '<input type="file" id="vis-file" accept="image/png,image/jpeg,image/webp,application/pdf"></label>' +
+        '<div class="card-actions"><button type="button" class="btn btn-small" id="vis-send">Envoyer le visuel</button></div></div>');
+
+    /* --- Lien de suivi à envoyer au client --- */
+    const trkUrl = trackingUrl(o);
+    const waNum = o.clients ? waLink(o.clients.whatsapp || o.clients.phone) : '';
+    const waMsg = 'Bonjour ' + (o.clients ? o.clients.name : '') + ', voici le lien pour suivre votre commande ' + o.order_number +
+      ' chez ' + C.COMPANY.name + ' et valider votre visuel : ' + trkUrl;
+    const waHref = (waNum || 'https://wa.me/') + '?text=' + encodeURIComponent(waMsg);
+    const linkSection = '<h4>Lien de suivi pour le client</h4>' +
+      '<p class="hint">Le client n\'a pas besoin de compte : il ouvre ce lien pour voir l\'avancement, valider son visuel et retrouver ses reçus. Ne l\'envoyez qu\'à lui.</p>' +
+      '<div class="line"><input id="trk-url" readonly value="' + esc(trkUrl) + '">' +
+      '<div class="card-actions"><button type="button" class="btn btn-small" id="trk-copy">Copier le lien</button>' +
+      '<a class="btn btn-small btn-ghost" id="trk-wa" href="' + esc(waHref) + '" target="_blank" rel="noopener">Envoyer par WhatsApp</a>' +
+      '<button type="button" class="btn btn-small btn-ghost" id="trk-regen">Changer le lien</button></div></div>';
+
     const body = h(
       '<div>' +
       '<div class="totals"><div><span>Total de la commande</span><span>' + money(o.total_amount) + '</span></div>' +
@@ -843,6 +918,7 @@
       '<label class="f">Priorité<select name="priority"><option value="normale"' + (o.priority === 'normale' ? ' selected' : '') + '>Normale</option>' +
       '<option value="urgente"' + (o.priority === 'urgente' ? ' selected' : '') + '>Urgente</option></select></label>' +
       '<label class="f full">Notes<textarea name="notes" rows="2">' + esc(o.notes) + '</textarea></label></div>' +
+      visualSection + linkSection +
       '<h4>Articles</h4>' + (items || '<p class="hint">Aucun article.</p>') +
       '<h4>Paiements</h4><div id="pay-list">' + payRows + '</div>' + payForm +
       '<h4>Historique</h4><div id="hist" class="hint">Chargement…</div></div>');
@@ -881,6 +957,60 @@
       toast('Paiement enregistré : ' + r.data.receipt_number);
     });
 
+    // Recharge les données puis rouvre la fenêtre de la commande
+    async function refreshAndReopen(msg) {
+      try { await loadOrders(); } catch (err) { toast(errMsg(err), true); }
+      if (modalRef) modalRef.close();
+      if (state.tab === 'commandes') renderOrders();
+      const fresh = state.orders.find(function (x) { return x.id === o.id; });
+      if (fresh) openOrderModal(fresh);
+      if (msg) toast(msg);
+    }
+
+    // Envoi d'un visuel : fichier -> stockage, puis enregistrement via la fonction sécurisée
+    const visBtn = $('#vis-send', body);
+    if (visBtn) visBtn.addEventListener('click', async function () {
+      const f = $('#vis-file', body).files[0];
+      if (!f) { toast('Choisissez d\'abord un fichier.', true); return; }
+      const ext = VISUAL_MIME[f.type];
+      if (!ext) { toast('Format non accepté. Utilisez PNG, JPG, WEBP ou PDF.', true); return; }
+      if (f.size > VISUAL_MAX) { toast('Fichier trop lourd (5 Mo maximum).', true); return; }
+      visBtn.disabled = true; visBtn.textContent = 'Envoi…';
+      const path = o.id + '/' + randomId() + '.' + ext;
+      const up = await sb.storage.from('visuels').upload(path, f, { contentType: f.type, upsert: false });
+      if (up.error) { toast(errMsg(up.error), true); visBtn.disabled = false; visBtn.textContent = 'Envoyer le visuel'; return; }
+      const r = await sb.rpc('add_visual', { p_order_id: o.id, p_path: path, p_name: f.name });
+      if (r.error) {
+        await sb.storage.from('visuels').remove([path]);   // on ne garde pas un fichier orphelin
+        toast(errMsg(r.error), true); visBtn.disabled = false; visBtn.textContent = 'Envoyer le visuel'; return;
+      }
+      await refreshAndReopen('Visuel envoyé. Envoyez maintenant le lien de suivi au client.');
+    });
+
+    // Rouvrir une validation
+    $$('[data-reopen]', body).forEach(function (b) {
+      b.addEventListener('click', async function () {
+        if (!window.confirm('Rouvrir la validation ? Le client pourra valider ou demander une modification à nouveau. L\'historique est conservé.')) return;
+        b.disabled = true;
+        const r = await sb.rpc('reopen_visual', { p_visual_id: b.getAttribute('data-reopen') });
+        if (r.error) { toast(errMsg(r.error), true); b.disabled = false; return; }
+        await refreshAndReopen('Validation rouverte.');
+      });
+    });
+
+    // Lien de suivi : copier / changer
+    $('#trk-copy', body).addEventListener('click', async function () {
+      const inp = $('#trk-url', body);
+      try { await navigator.clipboard.writeText(inp.value); toast('Lien copié.'); }
+      catch (err) { inp.focus(); inp.select(); toast('Sélectionnez le lien et copiez-le.', true); }
+    });
+    $('#trk-regen', body).addEventListener('click', async function () {
+      if (!window.confirm('Changer le lien ? L\'ancien lien ne fonctionnera plus : il faudra renvoyer le nouveau au client.')) return;
+      const r = await sb.rpc('regenerate_tracking_token', { p_order_id: o.id });
+      if (r.error) { toast(errMsg(r.error), true); return; }
+      await refreshAndReopen('Nouveau lien créé.');
+    });
+
     modalRef = openModal(o.order_number, body, {
       submitLabel: 'Enregistrer',
       onSubmit: async function () {
@@ -896,10 +1026,14 @@
             if (!window.confirm('Des paiements (' + money(paidOf(o)) + ') ont déjà été encaissés. Annuler quand même la commande ?')) return false;
           }
         }
-        const r = await sb.from('orders').update({
-          status: status, due_date: field('due_date').value || null, priority: field('priority').value,
+        // Le statut n'est envoyé que s'il a été changé ici : sinon on risquerait d'écraser
+        // une validation faite entre-temps par le client.
+        const changes = {
+          due_date: field('due_date').value || null, priority: field('priority').value,
           notes: field('notes').value.trim() || null
-        }).eq('id', o.id);
+        };
+        if (status !== o.status) changes.status = status;
+        const r = await sb.from('orders').update(changes).eq('id', o.id);
         if (r.error) throw r.error;
         await loadOrders();
         if (state.tab === 'commandes') renderOrders();
