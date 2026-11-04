@@ -41,7 +41,7 @@
   const VISUAL_MIME = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp', 'application/pdf': 'pdf' };
   const VISUAL_MAX = 5 * 1024 * 1024;   // 5 Mo
 
-  const state = { user: null, profile: null, tab: 'devis', clients: [], tiers: [], quotes: [], orders: [], loginMsg: '' };
+  const state = { user: null, profile: null, tab: 'devis', clients: [], tiers: [], quotes: [], orders: [], gallery: [], loginMsg: '' };
 
   /* ---------------------------- Outils ---------------------------- */
   const $ = (sel, root) => (root || document).querySelector(sel);
@@ -366,6 +366,7 @@
       '<button class="tab" data-tab="commandes">Commandes</button>' +
       '<button class="tab" data-tab="clients">Clients</button>' +
       '<button class="tab" data-tab="tarifs">Tarifs</button>' +
+      '<button class="tab" data-tab="galerie">Galerie</button>' +
       '<button class="tab" data-tab="sauvegarde">Sauvegarde' + (backupOverdue() ? ' <span aria-label="à faire" title="Sauvegarde à faire">&#9888;</span>' : '') + '</button></nav>' +
       '<main id="view"></main>';
     $('#logout').addEventListener('click', function () { logout(); });
@@ -382,12 +383,13 @@
     else if (tab === 'commandes') renderOrders();
     else if (tab === 'clients') renderClients();
     else if (tab === 'sauvegarde') renderBackup();
+    else if (tab === 'galerie') renderGallery();
     else renderTiers();
   }
 
   /* ---------------------------- SAUVEGARDE ---------------------------- */
   const BACKUP_TABLES = ['clients', 'price_tiers', 'quotes', 'quote_items', 'orders', 'order_items',
-    'payments', 'order_status_history', 'order_visuals', 'order_visual_events'];
+    'payments', 'order_status_history', 'order_visuals', 'order_visual_events', 'gallery_items'];
   const BACKUP_KEY = 'nexus_last_backup';
   const BACKUP_DAYS = 7;
 
@@ -481,6 +483,140 @@
       } catch (err) {
         toast('Export impossible : ' + errMsg(err), true);
       } finally { btn.disabled = false; }
+    });
+  }
+
+  /* ---------------------------- GALERIE (photos du site public) ---------------------------- */
+  const GALLERY_CATS = { realisation: 'Réalisation', boutique: 'Atelier / magasin' };
+  const GALLERY_MAX_SIDE = 1600;   // les photos de téléphone sont réduites avant l'envoi
+
+  function galleryUrl(path) {
+    return C.SUPABASE_URL.replace(/\/+$/, '') + '/storage/v1/object/public/galerie/' + String(path).split('/').map(encodeURIComponent).join('/');
+  }
+  // Réduit une photo (souvent 3 à 6 Mo) à environ 300 Ko, sans perte visible à l'écran
+  async function shrinkImage(file) {
+    const url = URL.createObjectURL(file);
+    try {
+      const img = await new Promise(function (resolve, reject) {
+        const i = new Image();
+        i.onload = function () { resolve(i); };
+        i.onerror = function () { reject(new Error('Photo illisible : ' + file.name + ' (format non pris en charge)')); };
+        i.src = url;
+      });
+      const k = Math.min(1, GALLERY_MAX_SIDE / Math.max(img.naturalWidth, img.naturalHeight));
+      const w = Math.max(1, Math.round(img.naturalWidth * k)), hh = Math.max(1, Math.round(img.naturalHeight * k));
+      const cv = document.createElement('canvas');
+      cv.width = w; cv.height = hh;
+      const ctx = cv.getContext('2d');
+      ctx.fillStyle = '#ffffff'; ctx.fillRect(0, 0, w, hh);   // fond blanc pour les images transparentes
+      ctx.drawImage(img, 0, 0, w, hh);
+      const blob = await new Promise(function (resolve) { cv.toBlob(resolve, 'image/jpeg', 0.82); });
+      if (!blob) throw new Error('Impossible de préparer la photo ' + file.name);
+      return blob;
+    } finally { URL.revokeObjectURL(url); }
+  }
+
+  async function loadGallery() {
+    const r = await sb.from('gallery_items').select('*').order('created_at', { ascending: false });
+    if (r.error) throw r.error;
+    state.gallery = r.data;
+  }
+
+  async function renderGallery() {
+    const view = $('#view');
+    view.innerHTML = '<p class="empty">Chargement…</p>';
+    try { await loadGallery(); } catch (err) {
+      view.innerHTML = '<div class="view-head"><h2>Galerie du site</h2></div><p class="note">La galerie n\'est pas encore activée. Dans Supabase, lancez le script <b>etape5.sql</b> (SQL Editor, New query, Run), puis rechargez cette page.</p>';
+      return;
+    }
+    if (state.tab !== 'galerie') return;
+    const items = state.gallery || [];
+    const nReal = items.filter(function (g) { return g.active && g.category === 'realisation'; }).length;
+    const nShop = items.filter(function (g) { return g.active && g.category === 'boutique'; }).length;
+    view.innerHTML =
+      '<div class="view-head"><h2>Galerie du site</h2></div>' +
+      '<p class="hint">Les photos ajoutées ici apparaissent sur la page d\'accueil de votre site : « Nos réalisations » et « Notre atelier ». ' +
+      'Elles sont réduites automatiquement. Évitez les photos où l\'on reconnaît des enfants ou des clients sans leur accord.</p>' +
+      '<div class="card"><h3>Ajouter des photos</h3><div class="form-grid" style="margin-top:8px">' +
+      '<label class="f">Où les afficher ?<select id="g-cat">' + options(GALLERY_CATS, 'realisation') + '</select></label>' +
+      '<label class="f">Légende (facultatif)<input id="g-cap" maxlength="120" placeholder="Ex : Maillots de l\'école Sainte-Marie"></label>' +
+      '<label class="f full">Choisir une ou plusieurs photos<input id="g-files" type="file" accept="image/jpeg,image/png,image/webp" multiple></label></div>' +
+      '<div class="card-actions"><button class="btn btn-small" id="g-add">Ajouter les photos</button></div>' +
+      '<p class="hint" id="g-status" style="margin:8px 0 0"></p></div>' +
+      '<h3 style="margin:18px 0 6px">Sur le site : ' + nReal + ' réalisation(s), ' + nShop + ' photo(s) d\'atelier</h3>' +
+      '<div id="g-list" class="g-grid">' + (items.length ? items.map(function (g) {
+        return '<button type="button" class="g-item' + (g.active ? '' : ' off') + '" data-id="' + esc(g.id) + '">' +
+          '<img src="' + esc(galleryUrl(g.file_path)) + '" alt="' + esc(g.caption || 'Photo') + '" loading="lazy">' +
+          '<span class="g-tag">' + esc(GALLERY_CATS[g.category]) + (g.active ? '' : ' · masquée') + '</span>' +
+          (g.caption ? '<span class="g-cap">' + esc(g.caption) + '</span>' : '') + '</button>';
+      }).join('') : '<p class="empty" style="grid-column:1/-1">Aucune photo pour le moment.</p>') + '</div>';
+
+    $('#g-add').addEventListener('click', addGalleryPhotos);
+    $('#g-list').addEventListener('click', function (e) {
+      const b = e.target.closest('[data-id]');
+      if (!b) return;
+      const g = state.gallery.find(function (x) { return x.id === b.getAttribute('data-id'); });
+      if (g) openGalleryModal(g);
+    });
+  }
+
+  async function addGalleryPhotos() {
+    const btn = $('#g-add'), st = $('#g-status');
+    const files = Array.prototype.slice.call($('#g-files').files);
+    if (!files.length) { toast('Choisissez d\'abord au moins une photo.', true); return; }
+    const cat = $('#g-cat').value, cap = $('#g-cap').value.trim() || null;
+    btn.disabled = true;
+    let ok = 0;
+    for (let i = 0; i < files.length; i++) {
+      st.textContent = 'Envoi de la photo ' + (i + 1) + ' sur ' + files.length + '…';
+      try {
+        if (!/^image\/(jpeg|png|webp)$/.test(files[i].type)) throw new Error(files[i].name + ' : utilisez des photos JPG, PNG ou WEBP.');
+        const blob = await shrinkImage(files[i]);
+        const path = randomId() + '.jpg';
+        const up = await sb.storage.from('galerie').upload(path, blob, { contentType: 'image/jpeg', upsert: false });
+        if (up.error) throw up.error;
+        const ins = await sb.from('gallery_items').insert({ category: cat, caption: cap, file_path: path });
+        if (ins.error) { await sb.storage.from('galerie').remove([path]); throw ins.error; }
+        ok++;
+      } catch (err) {
+        toast(errMsg(err), true);
+      }
+    }
+    btn.disabled = false;
+    if (state.tab === 'galerie') await renderGallery();
+    if (ok) toast(ok + ' photo(s) ajoutée(s). Elles sont déjà visibles sur le site.');
+  }
+
+  function openGalleryModal(g) {
+    const body = h('<div><img src="' + esc(galleryUrl(g.file_path)) + '" alt="" style="width:100%; max-height:300px; object-fit:contain; border-radius:12px; background:var(--g50); margin-bottom:12px">' +
+      '<div class="form-grid">' +
+      '<label class="f">Où l\'afficher ?<select name="category">' + options(GALLERY_CATS, g.category) + '</select></label>' +
+      '<label class="f">Légende<input name="caption" maxlength="120" value="' + esc(g.caption) + '"></label>' +
+      '<label class="f check full"><input type="checkbox" name="active"' + (g.active ? ' checked' : '') + '> Afficher sur le site</label></div></div>');
+    const del = document.createElement('button');
+    del.type = 'button'; del.className = 'btn btn-danger'; del.textContent = 'Supprimer';
+    let ref = null;
+    del.addEventListener('click', async function () {
+      if (!window.confirm('Supprimer définitivement cette photo ?')) return;
+      del.disabled = true;
+      const r = await sb.from('gallery_items').delete().eq('id', g.id);
+      if (r.error) { toast(errMsg(r.error), true); del.disabled = false; return; }
+      await sb.storage.from('galerie').remove([g.file_path]);
+      if (ref) ref.close();
+      await renderGallery();
+      toast('Photo supprimée.');
+    });
+    ref = openModal('Photo', body, {
+      buttons: [del], submitLabel: 'Enregistrer',
+      onSubmit: async function () {
+        const r = await sb.from('gallery_items').update({
+          category: $('[name="category"]', body).value, caption: $('[name="caption"]', body).value.trim() || null,
+          active: $('[name="active"]', body).checked
+        }).eq('id', g.id);
+        if (r.error) throw r.error;
+        await renderGallery();
+        toast('Photo mise à jour.');
+      }
     });
   }
 
@@ -1332,7 +1468,7 @@
     renderShell();
     $('#view').innerHTML = '<p class="empty">Chargement…</p>';
     try {
-      await Promise.all([loadClients(), loadTiers(), loadQuotes(), loadOrders()]);
+      await Promise.all([loadClients(), loadTiers(), loadQuotes(), loadOrders(), loadGallery().catch(function () { /* galerie pas encore activée : sans gravité */ })]);
     } catch (e) {
       toast(errMsg(e), true);
     }

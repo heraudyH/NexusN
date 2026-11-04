@@ -170,6 +170,20 @@
   footer{padding:36px 0; text-align:center; color:var(--mist); font-size:0.82rem;}
   footer .display{color:var(--paper); font-size:0.95rem; margin-bottom:6px;}
 
+
+  /* ---------- Galerie photos (réalisations et atelier) ---------- */
+  .gal-grid{display:grid; grid-template-columns:repeat(3,1fr); gap:14px;}
+  .gal-item{position:relative; display:block; width:100%; padding:0; border:1px solid var(--line); border-radius:16px; overflow:hidden; background:var(--panel); cursor:zoom-in; aspect-ratio:4/3; color:inherit; font:inherit;}
+  .gal-item img{width:100%; height:100%; object-fit:cover; display:block; transition:transform .35s;}
+  .gal-item:hover img{transform:scale(1.04);}
+  .gal-item:only-child{grid-column:1 / -1; max-width:640px;}
+  .gal-item .gal-cap{position:absolute; left:0; right:0; bottom:0; padding:28px 14px 12px; text-align:left; font-size:0.86rem; background:linear-gradient(transparent, rgba(15,23,32,0.88));}
+  #lightbox{position:fixed; inset:0; z-index:200; background:rgba(8,12,18,0.94); display:none; flex-direction:column; align-items:center; justify-content:center; padding:20px; gap:14px;}
+  #lightbox.open{display:flex;}
+  #lightbox img{max-width:100%; max-height:78vh; border-radius:12px; object-fit:contain;}
+  #lightbox .lb-cap{color:var(--paper); font-size:0.95rem; text-align:center; max-width:60ch;}
+  #lightbox .lb-close{position:absolute; top:14px; right:16px; width:46px; height:46px; border-radius:50%; border:1px solid var(--line); background:var(--panel); color:var(--paper); font-size:1.6rem; line-height:1; cursor:pointer;}
+
   @media (max-width:860px){
     .hero-grid{grid-template-columns:1fr;}
     .hero h1{font-size:2.05rem;}
@@ -180,6 +194,7 @@
     .contact-box{padding:30px 20px;}
     .field-row{grid-template-columns:1fr;}
     .form-panel{padding:22px;}
+    .gal-grid{grid-template-columns:1fr 1fr; gap:10px;}
   }
 </style>
 </head>
@@ -193,6 +208,7 @@
     </div>
     <nav>
       <a href="#poles">Pôles</a>
+      <a href="#realisations" id="nav-real" hidden>Réalisations</a>
       <a href="#commander">Commander</a>
       <a href="#reserver">Réserver</a>
       <a href="#devis">Devis</a>
@@ -330,6 +346,28 @@
     </div>
   </div>
 </section>
+
+<section id="realisations" hidden>
+  <div class="wrap">
+    <h2 class="section-title">Nos réalisations</h2>
+    <p class="section-sub">Quelques commandes déjà livrées : tee-shirts, maillots, casquettes et plus encore.</p>
+    <div class="gal-grid" id="gal-realisations"></div>
+  </div>
+</section>
+
+<section id="atelier" hidden>
+  <div class="wrap">
+    <h2 class="section-title">Notre atelier</h2>
+    <p class="section-sub">Venez nous rencontrer : voici l'endroit où tout se prépare.</p>
+    <div class="gal-grid" id="gal-atelier"></div>
+  </div>
+</section>
+
+<div id="lightbox" role="dialog" aria-modal="true" aria-label="Photo agrandie">
+  <button type="button" class="lb-close" aria-label="Fermer">&times;</button>
+  <img alt="">
+  <div class="lb-cap"></div>
+</div>
 
 <section id="commander">
   <div class="wrap">
@@ -511,5 +549,7 @@
   }
 </script>
 
+<script src="gestion-config.js"></script>
+<script src="galerie.js"></script>
 </body>
 </html>
