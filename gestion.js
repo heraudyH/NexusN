@@ -241,13 +241,116 @@
     sb.auth.signOut();
   }
 
-  function renderOperatorHome() {
+  /* ---------------------------- Mot de passe (admin et opérateur) ---------------------------- */
+  function openPasswordModal() {
+    const body = h('<div class="form-grid" style="grid-template-columns:1fr">' +
+      '<label class="f">Nouveau mot de passe (8 caractères minimum)<input name="p1" type="password" autocomplete="new-password" minlength="8" required></label>' +
+      '<label class="f">Retapez-le<input name="p2" type="password" autocomplete="new-password" minlength="8" required></label></div>');
+    openModal('Changer mon mot de passe', body, {
+      submitLabel: 'Enregistrer',
+      onSubmit: async function () {
+        const p1 = $('[name="p1"]', body).value, p2 = $('[name="p2"]', body).value;
+        if (p1.length < 8) throw new Error('Le mot de passe doit avoir au moins 8 caractères.');
+        if (p1 !== p2) throw new Error('Les deux mots de passe ne sont pas identiques.');
+        const r = await sb.auth.updateUser({ password: p1 });
+        if (r.error) throw r.error;
+        toast('Mot de passe changé.');
+      }
+    });
+  }
+
+  /* ---------------------------- ÉCRAN OPÉRATEUR (production) ---------------------------- */
+  // L'opérateur ne voit ni prix, ni paiements, ni téléphones : la base ne les lui envoie jamais.
+  const PROD_GROUPS = [
+    ['visuel_valide', 'À produire'], ['en_production', 'En production'], ['controle', 'Contrôle qualité'], ['prete', 'Prêtes']
+  ];
+  const PROD_ACTIONS = {   // statut actuel -> boutons [nouveau statut, libellé, principal ?]
+    visuel_valide: [['en_production', 'Lancer la production', true]],
+    en_production: [['controle', 'Passer au contrôle', true]],
+    controle: [['prete', 'Marquer prête', true], ['en_production', 'Renvoyer en production', false]],
+    prete: [['controle', 'Remettre en contrôle', false]]
+  };
+
+  function renderOperator() {
     $('#app').innerHTML =
-      '<div class="login-wrap"><div class="login-card"><div class="brand-mark">N</div>' +
-      '<h1>Bonjour ' + esc(state.profile.full_name || '') + '</h1>' +
-      '<p class="sub">Votre compte production est actif. Vos commandes à produire apparaîtront ici dans une prochaine étape.</p>' +
-      '<button class="btn" id="logout" style="width:100%">Se déconnecter</button></div></div>';
+      '<header class="topbar"><div class="brand"><div class="brand-mark">N</div>' +
+      '<div><strong>Nexus Numérique</strong><small>Production</small></div></div>' +
+      '<div class="user"><span>' + esc(state.profile.full_name || '') + '</span>' +
+      '<button class="btn btn-ghost btn-small" id="pwd">Mot de passe</button>' +
+      '<button class="btn btn-ghost btn-small" id="logout">Déconnexion</button></div></header>' +
+      '<main id="view"><div class="view-head"><h2>Commandes à produire</h2>' +
+      '<button class="btn btn-ghost btn-small" id="op-refresh">Actualiser</button></div><div id="op-list"><p class="empty">Chargement…</p></div></main>';
     $('#logout').addEventListener('click', function () { logout(); });
+    $('#pwd').addEventListener('click', openPasswordModal);
+    $('#op-refresh').addEventListener('click', loadOperator);
+    $('#op-list').addEventListener('click', onOperatorClick);
+    loadOperator();
+  }
+
+  async function loadOperator() {
+    const box = $('#op-list');
+    const r = await sb.rpc('operator_orders');
+    if (r.error) { box.innerHTML = '<p class="empty">' + esc(errMsg(r.error)) + '</p>'; return; }
+    state.prod = r.data || [];
+    // On garde ce que l'opérateur est en train de taper dans une remarque pendant l'actualisation
+    const drafts = {};
+    $$('.op-note', box).forEach(function (t) { if (t.value !== t.defaultValue) drafts[t.getAttribute('data-id')] = t.value; });
+    box.innerHTML = state.prod.length ? PROD_GROUPS.map(function (g) {
+      const rows = state.prod.filter(function (o) { return o.status === g[0]; });
+      if (!rows.length) return '';
+      return '<h3 class="op-group">' + esc(g[1]) + ' <span class="badge">' + rows.length + '</span></h3>' + rows.map(prodCard).join('');
+    }).join('') : '<p class="empty">Aucune commande à produire pour le moment.<br>Elles apparaissent ici dès que le client a validé son visuel et que l\'acompte est enregistré.</p>';
+    Object.keys(drafts).forEach(function (id) {
+      const t = $('.op-note[data-id="' + id + '"]', box); if (t) t.value = drafts[id];
+    });
+  }
+
+  function prodCard(o) {
+    const late = !!o.due_date && o.due_date < todayStr();
+    const v = o.visual;
+    const url = v ? visualUrl(v.file_path) : '';
+    const isPdf = v && /\.pdf$/i.test(v.file_path);
+    const items = (o.items || []).map(function (i) {
+      return '<div class="pay-row"><div>' + esc(i.description) + '</div><b>× ' + esc(i.quantity) + '</b></div>';
+    }).join('');
+    const total = (o.items || []).reduce(function (s, i) { return s + Number(i.quantity); }, 0);
+    const acts = (PROD_ACTIONS[o.status] || []).map(function (a) {
+      return '<button type="button" class="btn btn-small' + (a[2] ? '' : ' btn-ghost') + '" data-act="status" data-id="' + esc(o.id) + '" data-to="' + esc(a[0]) + '">' + esc(a[1]) + '</button>';
+    }).join('');
+    return '<article class="card' + (late ? ' late' : '') + '"><div class="card-top"><strong>' + esc(o.order_number) + '</strong>' +
+      (o.priority === 'urgente' ? '<span class="badge st-expire">Urgente</span>' : '') + '</div>' +
+      '<div class="card-client">' + esc(o.client_name) + '</div>' +
+      '<div class="card-meta"><span>Total : <b>' + esc(total) + ' pièce(s)</b></span>' +
+      (o.due_date ? '<span' + (late ? ' class="late-text"' : '') + '>Livraison : <b>' + esc(fmtDateOnly(o.due_date)) + '</b>' + (late ? ' (en retard)' : '') + '</span>' : '') + '</div>' +
+      (v ? '<div class="vis" style="border:none">' + (isPdf
+        ? '<a class="vis-img vis-pdf" href="' + esc(url) + '" target="_blank" rel="noopener">PDF</a>'
+        : '<a href="' + esc(url) + '" target="_blank" rel="noopener"><img class="vis-img" src="' + esc(url) + '" alt="Visuel validé" loading="lazy"></a>') +
+        '<div class="vis-info"><div class="l-hint">Visuel validé par le client (version ' + esc(v.version) + '). Touchez l\'image pour l\'ouvrir en grand.</div></div></div>' : '') +
+      '<div style="margin-top:6px">' + items + '</div>' +
+      '<label class="f" style="margin-top:10px">Remarque de production<textarea class="op-note" data-id="' + esc(o.id) + '" rows="2" maxlength="500" placeholder="Ex : il manque 5 t-shirts taille M">' + esc(o.production_note) + '</textarea></label>' +
+      '<div class="card-actions"><button type="button" class="btn btn-small btn-ghost" data-act="note" data-id="' + esc(o.id) + '">Enregistrer la remarque</button>' + acts + '</div></article>';
+  }
+
+  async function onOperatorClick(e) {
+    const b = e.target.closest('[data-act]');
+    if (!b) return;
+    const id = b.getAttribute('data-id');
+    if (b.getAttribute('data-act') === 'note') {
+      b.disabled = true;
+      const r = await sb.rpc('operator_set_note', { p_order_id: id, p_note: $('.op-note[data-id="' + id + '"]').value });
+      b.disabled = false;
+      if (r.error) { toast(errMsg(r.error), true); return; }
+      toast('Remarque enregistrée.');
+      return;
+    }
+    const to = b.getAttribute('data-to');
+    const label = b.textContent;
+    if (!window.confirm(label + ' ?')) return;
+    b.disabled = true;
+    const r = await sb.rpc('operator_set_status', { p_order_id: id, p_status: to });
+    if (r.error) { toast(errMsg(r.error), true); b.disabled = false; await loadOperator(); return; }
+    toast('C\'est fait : ' + (ORDER_STATUS[to] || to) + '.');
+    await loadOperator();
   }
 
   /* ---------------------------- Structure administrateur ---------------------------- */
@@ -256,6 +359,7 @@
       '<header class="topbar"><div class="brand"><div class="brand-mark">N</div>' +
       '<div><strong>Nexus Numérique</strong><small>Gestion</small></div></div>' +
       '<div class="user"><span>' + esc(state.profile.full_name || '') + '</span>' +
+      '<button class="btn btn-ghost btn-small" id="pwd">Mot de passe</button>' +
       '<button class="btn btn-ghost btn-small" id="logout">Déconnexion</button></div></header>' +
       '<nav class="tabs">' +
       '<button class="tab" data-tab="devis">Devis</button>' +
@@ -265,6 +369,7 @@
       '<button class="tab" data-tab="sauvegarde">Sauvegarde' + (backupOverdue() ? ' <span aria-label="à faire" title="Sauvegarde à faire">&#9888;</span>' : '') + '</button></nav>' +
       '<main id="view"></main>';
     $('#logout').addEventListener('click', function () { logout(); });
+    $('#pwd').addEventListener('click', openPasswordModal);
     $$('.tab').forEach(function (b) {
       b.addEventListener('click', function () { showTab(b.getAttribute('data-tab')); });
     });
@@ -1019,6 +1124,7 @@
       '<label class="f">Priorité<select name="priority"><option value="normale"' + (o.priority === 'normale' ? ' selected' : '') + '>Normale</option>' +
       '<option value="urgente"' + (o.priority === 'urgente' ? ' selected' : '') + '>Urgente</option></select></label>' +
       '<label class="f full">Notes<textarea name="notes" rows="2">' + esc(o.notes) + '</textarea></label></div>' +
+      (o.production_note ? '<p class="note" style="margin-top:12px"><b>Remarque de production :</b> ' + esc(o.production_note) + '</p>' : '') +
       visualSection + linkSection +
       '<h4>Articles</h4>' + (items || '<p class="hint">Aucun article.</p>') +
       '<h4>Paiements</h4><div id="pay-list">' + payRows + '</div>' + payForm +
@@ -1222,7 +1328,7 @@
       return;
     }
     state.profile = p.data;
-    if (p.data.role !== 'admin') { renderOperatorHome(); return; }
+    if (p.data.role !== 'admin') { renderOperator(); return; }
     renderShell();
     $('#view').innerHTML = '<p class="empty">Chargement…</p>';
     try {
