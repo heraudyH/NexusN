@@ -149,6 +149,10 @@
   .field textarea{resize:vertical; min-height:80px;}
   .field-row{display:grid; grid-template-columns:1fr 1fr; gap:14px;}
   .form-note{font-size:0.78rem; color:var(--mist); margin-top:14px; line-height:1.5;}
+  .hp{position:absolute; left:-9999px; top:auto; width:1px; height:1px; overflow:hidden;}
+  .form-status{font-size:0.88rem; margin-top:12px; line-height:1.45; display:none;}
+  .form-status.form-error{display:block; color:#F0A29E;}
+  .form-status.form-ok{display:block; color:#9ED3B2;}
 
   .timeline{display:grid; grid-template-columns:repeat(3,1fr); gap:20px;}
   .phase{background:var(--panel); border-radius:16px; padding:26px; border-top:3px solid var(--dot);}
@@ -196,6 +200,21 @@
     .form-panel{padding:22px;}
     .gal-grid{grid-template-columns:1fr 1fr; gap:10px;}
   }
+
+  [hidden]{display:none !important;}
+  /* Paiement mobile (affiché seulement si l'administrateur active un moyen de paiement) */
+  .pay-methods{display:grid; grid-template-columns:repeat(auto-fit,minmax(220px,1fr)); gap:14px; max-width:900px; margin-bottom:22px;}
+  .pay-card{background:var(--panel); border:1px solid var(--line); border-radius:16px; padding:20px; cursor:pointer; text-align:left; color:var(--paper); font:inherit; transition:border-color .2s;}
+  .pay-card:hover{border-color:var(--mist);}
+  .pay-card[aria-pressed="true"]{border-color:var(--gold); box-shadow:0 0 0 1px var(--gold) inset;}
+  .pay-card .pay-name{font-weight:600; font-size:1.02rem; margin-bottom:6px; display:block;}
+  .pay-card .pay-sub{font-size:0.8rem; color:var(--mist); display:block;}
+  .pay-box{background:var(--panel-2); border:1px dashed var(--line); border-radius:12px; padding:16px; margin-bottom:18px;}
+  .pay-box .pay-num{font-family:'IBM Plex Mono',monospace; font-size:1.25rem; color:var(--gold); letter-spacing:0.04em; word-break:break-all;}
+  .pay-box .pay-who{font-size:0.86rem; color:var(--mist); margin:4px 0 12px;}
+  .pay-actions{display:flex; gap:10px; flex-wrap:wrap;}
+  .pay-actions .btn{padding:9px 16px; font-size:0.84rem;}
+  .pay-steps{font-size:0.88rem; color:var(--mist); line-height:1.6; margin-bottom:16px; padding-left:18px;}
 </style>
 </head>
 <body>
@@ -212,6 +231,7 @@
       <a href="#commander">Commander</a>
       <a href="#reserver">Réserver</a>
       <a href="#devis">Devis</a>
+      <a href="#payer" id="nav-pay" hidden>Payer</a>
       <a class="btn btn-gold" href="https://wa.me/2250502080649" target="_blank" rel="noopener">WhatsApp</a>
     </nav>
   </div>
@@ -398,7 +418,19 @@
         <label for="floc-note">Détails (logo, texte, délai...)</label>
         <textarea id="floc-note" placeholder="Décrivez votre commande : logo à imprimer, texte, date souhaitée..."></textarea>
       </div>
+      <div class="field-row">
+        <div class="field">
+          <label for="floc-nom">Votre nom</label>
+          <input type="text" id="floc-nom" placeholder="Nom complet" autocomplete="name" maxlength="100">
+        </div>
+        <div class="field">
+          <label for="floc-tel">Votre numéro (WhatsApp de préférence)</label>
+          <input type="tel" id="floc-tel" placeholder="ex : 07 00 00 00 00" autocomplete="tel" inputmode="tel" maxlength="30">
+        </div>
+      </div>
+      <div class="hp" aria-hidden="true"><label for="floc-hp">Ne pas remplir</label><input type="text" id="floc-hp" tabindex="-1" autocomplete="off"></div>
       <button class="btn btn-gold btn-block" onclick="envoyerFlocage()">Envoyer la demande sur WhatsApp</button>
+      <p class="form-status" id="floc-status" role="status"></p>
       <p class="form-note">Vous pourrez joindre votre logo directement dans la conversation WhatsApp après l'envoi de ce message.</p>
     </div>
   </div>
@@ -442,7 +474,19 @@
         <label for="game-note">Nombre de joueurs / précisions</label>
         <input type="text" id="game-note" placeholder="ex : 2 joueurs, FIFA">
       </div>
+      <div class="field-row">
+        <div class="field">
+          <label for="game-nom">Votre nom</label>
+          <input type="text" id="game-nom" placeholder="Nom complet" autocomplete="name" maxlength="100">
+        </div>
+        <div class="field">
+          <label for="game-tel">Votre numéro (WhatsApp de préférence)</label>
+          <input type="tel" id="game-tel" placeholder="ex : 07 00 00 00 00" autocomplete="tel" inputmode="tel" maxlength="30">
+        </div>
+      </div>
+      <div class="hp" aria-hidden="true"><label for="game-hp">Ne pas remplir</label><input type="text" id="game-hp" tabindex="-1" autocomplete="off"></div>
       <button class="btn btn-gold btn-block" onclick="envoyerReservation()">Réserver sur WhatsApp</button>
+      <p class="form-status" id="game-status" role="status"></p>
     </div>
   </div>
 </section>
@@ -465,7 +509,7 @@
       <div class="field-row">
         <div class="field">
           <label for="devis-nom">Votre nom</label>
-          <input type="text" id="devis-nom" placeholder="Nom complet">
+          <input type="text" id="devis-nom" placeholder="Nom complet" autocomplete="name" maxlength="100">
         </div>
         <div class="field">
           <label for="devis-structure">École / club / entreprise (si applicable)</label>
@@ -473,10 +517,53 @@
         </div>
       </div>
       <div class="field">
+        <label for="devis-tel">Votre numéro (WhatsApp de préférence)</label>
+        <input type="tel" id="devis-tel" placeholder="ex : 07 00 00 00 00" autocomplete="tel" inputmode="tel" maxlength="30">
+      </div>
+      <div class="hp" aria-hidden="true"><label for="devis-hp">Ne pas remplir</label><input type="text" id="devis-hp" tabindex="-1" autocomplete="off"></div>
+      <div class="field">
         <label for="devis-message">Décrivez votre besoin</label>
         <textarea id="devis-message" placeholder="ex : nettoyage d'un local de 50m², peinture d'une clôture, prestation agricole..."></textarea>
       </div>
       <button class="btn btn-gold btn-block" onclick="envoyerDevis()">Envoyer la demande de devis</button>
+      <p class="form-status" id="devis-status" role="status"></p>
+    </div>
+  </div>
+</section>
+
+<section id="payer" hidden>
+  <div class="wrap">
+    <h2 class="section-title">Payer votre commande</h2>
+    <p class="section-sub">Payez avec votre application Mobile Money, puis prévenez-nous ici : nous vérifions la réception et confirmons.</p>
+    <div class="pay-methods" id="pay-methods"></div>
+    <div class="form-panel accent-gold" id="pay-panel" hidden>
+      <div class="pay-box" id="pay-box">
+        <div class="pay-who" id="pay-send-label">Envoyez l'argent à :</div>
+        <div class="pay-num" id="pay-num"></div>
+        <div class="pay-who" id="pay-who"></div>
+        <div class="pay-actions">
+          <button type="button" class="btn btn-ghost" id="pay-copy">Copier le numéro</button>
+          <a class="btn btn-gold" id="pay-link" href="#" target="_blank" rel="noopener noreferrer" hidden>Ouvrir le paiement</a>
+        </div>
+      </div>
+      <ol class="pay-steps">
+        <li>Envoyez le montant exact depuis votre application.</li>
+        <li>Revenez ici et remplissez le formulaire ci-dessous.</li>
+        <li>Nous vérifions la réception, puis nous vous confirmons sur WhatsApp.</li>
+      </ol>
+      <div class="field-row">
+        <div class="field"><label for="pay-nom">Votre nom</label><input type="text" id="pay-nom" autocomplete="name" maxlength="100" placeholder="Nom complet"></div>
+        <div class="field"><label for="pay-tel">Votre numéro</label><input type="tel" id="pay-tel" autocomplete="tel" inputmode="tel" maxlength="30" placeholder="ex : 07 00 00 00 00"></div>
+      </div>
+      <div class="field-row">
+        <div class="field"><label for="pay-montant">Montant payé (FCFA)</label><input type="number" id="pay-montant" min="1" inputmode="numeric" placeholder="ex : 20000"></div>
+        <div class="field"><label for="pay-cmd">N° de commande (si vous l'avez)</label><input type="text" id="pay-cmd" maxlength="30" placeholder="ex : CMD-2026-0001"></div>
+      </div>
+      <div class="field"><label for="pay-ref">Référence de la transaction (facultatif)</label><input type="text" id="pay-ref" maxlength="60" placeholder="Code reçu par SMS"></div>
+      <div class="hp" aria-hidden="true"><label for="pay-hp">Ne pas remplir</label><input type="text" id="pay-hp" tabindex="-1" autocomplete="off"></div>
+      <button class="btn btn-gold btn-block" id="pay-send" type="button">J'ai payé, prévenir Nexus</button>
+      <p class="form-status" id="pay-status" role="status"></p>
+      <p class="form-note">Votre paiement n'est confirmé qu'après vérification par Nexus. Ne payez qu'au numéro et au nom affichés ici.</p>
     </div>
   </div>
 </section>
@@ -510,46 +597,81 @@
     window.open(url, '_blank');
   }
 
+
+  function valeur(id){ var el = document.getElementById(id); return el ? el.value.trim() : ""; }
+  function telValide(v){ var d = String(v || "").replace(/\D/g, ""); return d.length >= 8 && d.length <= 15; }
+  function messageForm(id, texte, erreur){
+    var el = document.getElementById(id);
+    el.textContent = texte;
+    el.className = "form-status " + (erreur ? "form-error" : "form-ok");
+  }
+
+  // Enregistre la demande dans l'application de gestion. Ne bloque JAMAIS le client :
+  // si cet enregistrement échoue, le message WhatsApp part quand même.
+  function enregistrerDemande(kind, nom, tel, structure, message, data, piege){
+    var CFG = window.NEXUS_CONFIG || {};   // lu au moment de l'envoi : gestion-config.js se charge après ce script
+    if(!CFG.SUPABASE_URL || !CFG.SUPABASE_KEY || !window.fetch){ return; }
+    try{
+      fetch(CFG.SUPABASE_URL.replace(/\/+$/, "") + "/rest/v1/rpc/submit_request", {
+        method: "POST", keepalive: true,
+        headers: { "apikey": CFG.SUPABASE_KEY, "Content-Type": "application/json" },
+        body: JSON.stringify({ p_kind: kind, p_name: nom, p_phone: tel, p_organization: structure || null,
+                               p_message: message, p_data: data, p_hp: piege || "" })
+      }).catch(function(){});
+    }catch(e){}
+  }
+
+  // Vérifie nom + téléphone ; renvoie false (avec un message) s'il manque quelque chose
+  function identiteValide(prefixe, statutId){
+    if(valeur(prefixe + "-nom").length < 2){ messageForm(statutId, "Indiquez votre nom.", true); return false; }
+    if(!telValide(valeur(prefixe + "-tel"))){ messageForm(statutId, "Indiquez un numéro de téléphone valide, pour que nous puissions vous répondre.", true); return false; }
+    return true;
+  }
+
   function envoyerFlocage(){
-    var article = document.getElementById('floc-article').value;
-    var qty = document.getElementById('floc-qty').value;
-    var color = document.getElementById('floc-color').value;
-    var note = document.getElementById('floc-note').value;
+    if(!identiteValide("floc", "floc-status")){ return; }
+    var article = valeur("floc-article"), qty = valeur("floc-qty"), color = valeur("floc-color"), note = valeur("floc-note");
+    var nom = valeur("floc-nom"), tel = valeur("floc-tel");
     var msg = "Bonjour Nexus, je souhaite commander : " + qty + " x " + article;
     if(color){ msg += ", couleur : " + color; }
     msg += ".";
     if(note){ msg += " Détails : " + note; }
+    msg += " Mon nom : " + nom + ". Mon numéro : " + tel + ".";
+    enregistrerDemande("flocage", nom, tel, null, msg, { article: article, quantity: parseInt(qty, 10) || 1, color: color, note: note }, valeur("floc-hp"));
     ouvrirWhatsApp(msg);
+    messageForm("floc-status", "Demande enregistrée. Terminez l'envoi dans WhatsApp pour que nous la recevions aussi là-bas.", false);
   }
 
   function envoyerReservation(){
-    var site = document.getElementById('game-site').value;
-    var date = document.getElementById('game-date').value;
-    var heure = document.getElementById('game-heure').value;
-    var duree = document.getElementById('game-duree').value;
-    var note = document.getElementById('game-note').value;
+    if(!identiteValide("game", "game-status")){ return; }
+    var site = valeur("game-site"), date = valeur("game-date"), heure = valeur("game-heure"), duree = valeur("game-duree"), note = valeur("game-note");
+    var nom = valeur("game-nom"), tel = valeur("game-tel");
     var msg = "Bonjour Nexus, je souhaite réserver un créneau gaming au site : " + site + ".";
     if(date){ msg += " Date : " + date + "."; }
     if(heure){ msg += " Heure : " + heure + "."; }
     msg += " Durée : " + duree + ".";
     if(note){ msg += " Précisions : " + note; }
+    msg += " Mon nom : " + nom + ". Mon numéro : " + tel + ".";
+    enregistrerDemande("gaming", nom, tel, null, msg, { site: site, date: date, time: heure, duration: duree, note: note }, valeur("game-hp"));
     ouvrirWhatsApp(msg);
+    messageForm("game-status", "Réservation enregistrée. Terminez l'envoi dans WhatsApp pour la confirmer.", false);
   }
 
   function envoyerDevis(){
-    var pole = document.getElementById('devis-pole').value;
-    var nom = document.getElementById('devis-nom').value;
-    var structure = document.getElementById('devis-structure').value;
-    var message = document.getElementById('devis-message').value;
-    var msg = "Bonjour Nexus, je souhaite un devis pour le pôle : " + pole + ".";
-    if(nom){ msg += " Mon nom : " + nom + "."; }
+    if(!identiteValide("devis", "devis-status")){ return; }
+    var pole = valeur("devis-pole"), nom = valeur("devis-nom"), tel = valeur("devis-tel"), structure = valeur("devis-structure"), message = valeur("devis-message");
+    if(message.length < 3){ messageForm("devis-status", "Décrivez votre besoin en quelques mots.", true); return; }
+    var msg = "Bonjour Nexus, je souhaite un devis pour le pôle : " + pole + ". Mon nom : " + nom + ".";
     if(structure){ msg += " Structure : " + structure + "."; }
-    if(message){ msg += " Besoin : " + message; }
+    msg += " Besoin : " + message + " Mon numéro : " + tel + ".";
+    enregistrerDemande("devis", nom, tel, structure, msg, { pole: pole, message: message }, valeur("devis-hp"));
     ouvrirWhatsApp(msg);
+    messageForm("devis-status", "Demande enregistrée. Terminez l'envoi dans WhatsApp pour que nous la recevions aussi là-bas.", false);
   }
 </script>
 
 <script src="gestion-config.js"></script>
 <script src="galerie.js"></script>
+<script src="paiement.js"></script>
 </body>
 </html>

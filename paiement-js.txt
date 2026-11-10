@@ -1,0 +1,99 @@
+/* =====================================================================
+   NEXUS NUMÉRIQUE — Section « Payer » du site public (Wave, Orange Money, MTN, Moov)
+   Lit les moyens de paiement ACTIVÉS dans l'application de gestion. Si aucun n'est
+   activé, ou en cas de problème, la section reste cachée : le reste du site n'est
+   jamais affecté.
+   Important : ce n'est PAS un paiement automatique. Le client paie dans son
+   application, puis déclare son paiement ; Nexus vérifie avant de confirmer.
+   Fichiers nécessaires : paiement.js + gestion-config.js
+   ===================================================================== */
+(function () {
+  'use strict';
+  var C = window.NEXUS_CONFIG;
+  if (!C || !C.SUPABASE_URL || !C.SUPABASE_KEY || !window.fetch) return;
+  var NAMES = { wave: 'Wave', orange: 'Orange Money', mtn: 'MTN Money', moov: 'Moov Money' };
+  var methods = [], current = null;
+  function $(id) { return document.getElementById(id); }
+
+  function safeLink(u) { return /^https:\/\/[^\s"<>]+$/i.test(u || '') ? u : ''; }
+  function amount() { var v = parseInt($('pay-montant').value, 10); return v > 0 ? v : 0; }
+  function say(txt, err) { var el = $('pay-status'); el.textContent = txt; el.className = 'form-status ' + (err ? 'form-error' : 'form-ok'); }
+
+  function select(m) {
+    current = m;
+    Array.prototype.forEach.call($('pay-methods').children, function (b) { b.setAttribute('aria-pressed', b.getAttribute('data-p') === m.provider ? 'true' : 'false'); });
+    $('pay-panel').hidden = false;
+    $('pay-send-label').textContent = 'Envoyez l\'argent par ' + NAMES[m.provider] + ' à :';
+    $('pay-num').textContent = m.account_number || '';
+    $('pay-num').hidden = !m.account_number;
+    $('pay-who').textContent = m.account_name ? 'Titulaire : ' + m.account_name : '';
+    $('pay-copy').hidden = !m.account_number;
+    var link = $('pay-link');
+    link.hidden = !safeLink(m.pay_link);
+    link.textContent = 'Payer avec ' + NAMES[m.provider];
+    say('', false);
+  }
+
+  function build() {
+    var box = $('pay-methods');
+    methods.forEach(function (m) {
+      var b = document.createElement('button');
+      b.type = 'button'; b.className = 'pay-card'; b.setAttribute('data-p', m.provider); b.setAttribute('aria-pressed', 'false');
+      var n = document.createElement('span'); n.className = 'pay-name'; n.textContent = NAMES[m.provider] || m.provider;
+      var s = document.createElement('span'); s.className = 'pay-sub'; s.textContent = m.account_number ? m.account_number : 'Paiement par lien';
+      b.appendChild(n); b.appendChild(s);
+      b.addEventListener('click', function () { select(m); });
+      box.appendChild(b);
+    });
+    $('payer').hidden = false;
+    var nav = $('nav-pay'); if (nav) nav.hidden = false;
+    if (methods.length === 1) select(methods[0]);
+  }
+
+  $('pay-copy').addEventListener('click', function () {
+    if (!current || !current.account_number) return;
+    var txt = current.account_number, done = function () { say('Numéro copié.', false); };
+    if (navigator.clipboard && navigator.clipboard.writeText) navigator.clipboard.writeText(txt).then(done, function () { say('Copie impossible : recopiez le numéro à la main.', true); });
+    else say('Recopiez le numéro à la main.', true);
+  });
+
+  // Lien de paiement : {montant} est remplacé par le montant saisi (seulement si l'administrateur l'a prévu)
+  $('pay-link').addEventListener('click', function (e) {
+    if (!current) { e.preventDefault(); return; }
+    var url = safeLink(current.pay_link);
+    if (!url) { e.preventDefault(); return; }
+    if (url.indexOf('{montant}') !== -1) {
+      if (!amount()) { e.preventDefault(); say('Indiquez d\'abord le montant à payer.', true); return; }
+      url = url.replace('{montant}', String(amount()));
+    }
+    this.href = url;
+  });
+
+  $('pay-send').addEventListener('click', function () {
+    if (!current) { say('Choisissez d\'abord un moyen de paiement.', true); return; }
+    var nom = $('pay-nom').value.trim(), tel = $('pay-tel').value.trim(), montant = amount();
+    var cmd = $('pay-cmd').value.trim().toUpperCase(), ref = $('pay-ref').value.trim();
+    var digits = tel.replace(/\D/g, '');
+    if (nom.length < 2) { say('Indiquez votre nom.', true); return; }
+    if (digits.length < 8 || digits.length > 15) { say('Indiquez un numéro de téléphone valide.', true); return; }
+    if (!montant) { say('Indiquez le montant payé.', true); return; }
+    var msg = 'Bonjour Nexus, j\'ai payé ' + montant + ' FCFA par ' + NAMES[current.provider] + '.';
+    if (cmd) msg += ' Commande : ' + cmd + '.';
+    if (ref) msg += ' Référence : ' + ref + '.';
+    msg += ' Mon nom : ' + nom + '. Mon numéro : ' + tel + '.';
+    if (typeof window.enregistrerDemande === 'function') {
+      window.enregistrerDemande('paiement', nom, tel, null, msg,
+        { provider: current.provider, amount: montant, order_number: cmd, reference: ref }, $('pay-hp').value);
+    }
+    if (typeof window.ouvrirWhatsApp === 'function') window.ouvrirWhatsApp(msg);
+    say('Merci ! Votre déclaration est enregistrée. Nous vérifions la réception et vous confirmons rapidement. Terminez l\'envoi dans WhatsApp pour aller plus vite.', false);
+  });
+
+  fetch(C.SUPABASE_URL.replace(/\/+$/, '') + '/rest/v1/rpc/public_payment_methods', {
+    method: 'POST', headers: { apikey: C.SUPABASE_KEY, 'Content-Type': 'application/json' }, body: '{}'
+  }).then(function (r) { return r.ok ? r.json() : []; }).then(function (list) {
+    if (!Array.isArray(list)) return;
+    methods = list.filter(function (m) { return m && NAMES[m.provider] && (m.account_number || safeLink(m.pay_link)); });
+    if (methods.length) build();
+  }).catch(function () { /* section simplement cachée */ });
+})();
