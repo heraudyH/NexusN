@@ -215,6 +215,13 @@
   .pay-actions{display:flex; gap:10px; flex-wrap:wrap;}
   .pay-actions .btn{padding:9px 16px; font-size:0.84rem;}
   .pay-steps{font-size:0.88rem; color:var(--mist); line-height:1.6; margin-bottom:16px; padding-left:18px;}
+
+  /* Pôles pilotés depuis l'application (poles.js) */
+  #poles-active .pole-card:nth-child(5):not(:last-child){grid-column:auto;}
+  #poles-active .pole-card:last-child:nth-child(odd){grid-column:1 / -1;}
+  .pole-card .manager{margin-top:14px; font-size:0.82rem; color:var(--mist);}
+  .pole-card .manager a{color:var(--gold); text-decoration:none;}
+  @media (max-width:860px){ #poles-active .pole-card:last-child:nth-child(odd){grid-column:auto;} }
 </style>
 </head>
 <body>
@@ -241,8 +248,8 @@
   <div class="wrap hero-grid">
     <div>
       <span class="eyebrow">Koffikro — économie circulaire locale</span>
-      <h1>Une seule activité<br>fait travailler cinq pôles.</h1>
-      <p class="lead">Nexus Numérique relie le gaming, la personnalisation textile, l'agriculture, l'environnement et le bâtiment en une seule plateforme de services de proximité.</p>
+      <h1 id="hero-title">Une seule activité<br>fait travailler cinq pôles.</h1>
+      <p class="lead" id="hero-lead">Nexus Numérique relie le gaming, la personnalisation textile, l'agriculture, l'environnement et le bâtiment en une seule plateforme de services de proximité.</p>
       <div class="hero-ctas">
         <a class="btn btn-gold" href="#commander">Commander un flocage</a>
         <a class="btn btn-ghost" href="#reserver">Réserver un créneau gaming</a>
@@ -250,35 +257,35 @@
     </div>
     <div class="diagram-box">
       <svg id="hub-svg" viewBox="0 0 420 420" xmlns="http://www.w3.org/2000/svg">
-        <line class="spoke" x1="210" y1="210" x2="210" y2="70"  stroke="#E3A544" stroke-width="1.5"/>
-        <line class="spoke" x1="210" y1="210" x2="342" y2="150" stroke="#D9673C" stroke-width="1.5"/>
-        <line class="spoke" x1="210" y1="210" x2="322" y2="300" stroke="#4F8F6B" stroke-width="1.5"/>
-        <line class="spoke" x1="210" y1="210" x2="118" y2="320" stroke="#3E8E8C" stroke-width="1.5"/>
-        <line class="spoke" x1="210" y1="210" x2="78"  y2="150" stroke="#6E7C91" stroke-width="1.5"/>
+        <line class="spoke" data-pole="numerique" x1="210" y1="210" x2="210" y2="70"  stroke="#E3A544" stroke-width="1.5"/>
+        <line class="spoke" data-pole="communication" x1="210" y1="210" x2="342" y2="150" stroke="#D9673C" stroke-width="1.5"/>
+        <line class="spoke" data-pole="agriculture" x1="210" y1="210" x2="322" y2="300" stroke="#4F8F6B" stroke-width="1.5"/>
+        <line class="spoke" data-pole="environnement" x1="210" y1="210" x2="118" y2="320" stroke="#3E8E8C" stroke-width="1.5"/>
+        <line class="spoke" data-pole="batiment" x1="210" y1="210" x2="78"  y2="150" stroke="#6E7C91" stroke-width="1.5"/>
         <circle class="center-circle" cx="210" cy="210" r="46"/>
         <text class="center-text" x="210" y="206" text-anchor="middle">NEXUS</text>
         <text class="node-label" x="210" y="222" text-anchor="middle" fill="#8FA0AC">effet nexus</text>
-        <g class="node-group">
+        <g class="node-group" data-pole="numerique">
           <circle class="node-circle" cx="210" cy="70" r="30" fill="#E3A544"/>
           <text class="node-label" x="210" y="66" text-anchor="middle" fill="#0F1720" font-weight="600">Numérique</text>
           <text class="node-label" x="210" y="79" text-anchor="middle" fill="#0F1720" font-weight="600">&amp; Loisirs</text>
         </g>
-        <g class="node-group">
+        <g class="node-group" data-pole="communication">
           <circle class="node-circle" cx="342" cy="150" r="30" fill="#D9673C"/>
           <text class="node-label" x="342" y="146" text-anchor="middle" fill="#0F1720" font-weight="600">Communi-</text>
           <text class="node-label" x="342" y="159" text-anchor="middle" fill="#0F1720" font-weight="600">cation</text>
         </g>
-        <g class="node-group">
+        <g class="node-group" data-pole="agriculture">
           <circle class="node-circle" cx="322" cy="300" r="30" fill="#4F8F6B"/>
           <text class="node-label" x="322" y="296" text-anchor="middle" fill="#0F1720" font-weight="600">Agri-</text>
           <text class="node-label" x="322" y="309" text-anchor="middle" fill="#0F1720" font-weight="600">culture</text>
         </g>
-        <g class="node-group">
+        <g class="node-group" data-pole="environnement">
           <circle class="node-circle" cx="118" cy="320" r="30" fill="#3E8E8C"/>
           <text class="node-label" x="118" y="316" text-anchor="middle" fill="#0F1720" font-weight="600">Environ-</text>
           <text class="node-label" x="118" y="329" text-anchor="middle" fill="#0F1720" font-weight="600">nement</text>
         </g>
-        <g class="node-group">
+        <g class="node-group" data-pole="batiment">
           <circle class="node-circle" cx="78" cy="150" r="30" fill="#6E7C91"/>
           <text class="node-label" x="78" y="146" text-anchor="middle" fill="#0F1720" font-weight="600">Bâtiment</text>
           <text class="node-label" x="78" y="159" text-anchor="middle" fill="#0F1720" font-weight="600">&amp; Maintenance</text>
@@ -302,7 +309,7 @@
       </div>
       <div class="compare-card now">
         <h3>Maintenant</h3>
-        <div class="pill-list">
+        <div class="pill-list" id="now-pills">
           <span class="pill">Numérique &amp; loisirs</span><span class="pill">Communication</span>
           <span class="pill">Agriculture</span><span class="pill">Environnement</span><span class="pill">Bâtiment</span>
         </div>
@@ -313,9 +320,9 @@
 
 <section id="poles">
   <div class="wrap">
-    <h2 class="section-title">Nos pôles actifs</h2>
+    <h2 class="section-title" id="poles-title">Nos pôles actifs</h2>
     <p class="section-sub">Ce qui tourne déjà chez Nexus, dès aujourd'hui.</p>
-    <div class="poles-grid">
+    <div class="poles-grid" id="poles-active">
       <div class="pole-card" style="--accent:#E3A544">
         <span class="status">● Actif</span>
         <span class="num">Pôle</span>
@@ -345,8 +352,8 @@
       </div>
     </div>
 
-    <div class="poles-soon-title">À venir progressivement</div>
-    <div class="poles-grid">
+    <div class="poles-soon-title" id="poles-soon-title">À venir progressivement</div>
+    <div class="poles-grid" id="poles-soon">
       <div class="pole-card pole-card--soon">
         <span class="status">Bientôt</span>
         <span class="num">Pôle</span>
@@ -498,7 +505,7 @@
     <div class="form-panel accent-mixed">
       <div class="field">
         <label for="devis-pole">Pôle concerné</label>
-        <select id="devis-pole">
+        <select id="devis-pole" data-dynamic>
           <option>Agriculture &amp; Valorisation</option>
           <option>Environnement &amp; Propreté</option>
           <option>Bâtiment &amp; Maintenance</option>
@@ -673,5 +680,6 @@
 <script src="gestion-config.js"></script>
 <script src="galerie.js"></script>
 <script src="paiement.js"></script>
+<script src="poles.js"></script>
 </body>
 </html>
