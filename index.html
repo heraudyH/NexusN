@@ -243,6 +243,20 @@
     .action-bar .btn{flex:1; min-height:48px; padding:12px 10px;}
     footer{padding-bottom:84px;}
   }
+
+  /* Actualités et FAQ (contenu.js) */
+  .news-list{display:grid; grid-template-columns:repeat(auto-fit,minmax(260px,1fr)); gap:18px;}
+  .news-card{background:var(--panel); border:1px solid var(--line); border-radius:16px; padding:22px;}
+  .news-card time{font-family:'IBM Plex Mono',monospace; font-size:0.72rem; color:var(--gold); letter-spacing:0.06em; text-transform:uppercase;}
+  .news-card h3{font-size:1.05rem; margin:8px 0 10px;}
+  .news-card p{color:var(--mist); font-size:0.92rem; white-space:pre-line;}
+  .faq-list{max-width:780px; display:flex; flex-direction:column; gap:10px;}
+  .faq-list details{background:var(--panel); border:1px solid var(--line); border-radius:12px; padding:14px 18px;}
+  .faq-list summary{cursor:pointer; font-weight:600; list-style:none;}
+  .faq-list summary::-webkit-details-marker{display:none;}
+  .faq-list summary::after{content:"+"; float:right; color:var(--gold);}
+  .faq-list details[open] summary::after{content:"\2212";}
+  .faq-list details p{color:var(--mist); margin-top:10px; font-size:0.94rem; white-space:pre-line;}
 </style>
 </head>
 <body>
@@ -259,6 +273,8 @@
       <a href="#commander">Commander</a>
       <a href="#reserver">Réserver</a>
       <a href="#devis">Devis</a>
+      <a href="#actualites" id="nav-news" hidden>Actualités</a>
+      <a href="#faq" id="nav-faq" hidden>FAQ</a>
       <a href="#payer" id="nav-pay" hidden>Payer</a>
       <a class="btn btn-gold" href="https://wa.me/2250502080649" target="_blank" rel="noopener">WhatsApp</a>
     </nav>
@@ -268,10 +284,10 @@
 <section class="hero">
   <div class="wrap hero-grid">
     <div>
-      <span class="eyebrow">Koffikro — économie circulaire locale</span>
+      <span class="eyebrow" data-cms="hero_eyebrow">Koffikro — économie circulaire locale</span>
       <h1 id="hero-title">Une seule activité<br>fait travailler cinq pôles.</h1>
       <p class="lead" id="hero-lead">Nexus Numérique relie le gaming, la personnalisation textile, l'agriculture, l'environnement et le bâtiment en une seule plateforme de services de proximité.</p>
-      <p class="hero-promise">Commandez, réservez ou demandez un devis en 2 minutes, depuis votre téléphone.</p>
+      <p class="hero-promise" data-cms="hero_promise">Commandez, réservez ou demandez un devis en 2 minutes, depuis votre téléphone.</p>
       <div class="hero-ctas">
         <a class="btn btn-gold" href="#commander">Commander un flocage</a>
         <a class="btn btn-ghost" href="#reserver">Réserver un créneau gaming</a>
@@ -328,7 +344,7 @@
 <section id="vision">
   <div class="wrap">
     <h2 class="section-title">Ce qui change</h2>
-    <p class="section-sub">Le gaming et le numérique restent le cœur du projet, mais ils ne sont plus seuls.</p>
+    <p class="section-sub" data-cms="vision_sub">Le gaming et le numérique restent le cœur du projet, mais ils ne sont plus seuls.</p>
     <div class="compare-grid">
       <div class="compare-card">
         <h3>Avant</h3>
@@ -351,7 +367,7 @@
 <section id="poles">
   <div class="wrap">
     <h2 class="section-title" id="poles-title">Nos pôles actifs</h2>
-    <p class="section-sub">Ce qui tourne déjà chez Nexus, dès aujourd'hui.</p>
+    <p class="section-sub" data-cms="poles_sub">Ce qui tourne déjà chez Nexus, dès aujourd'hui.</p>
     <div class="poles-grid" id="poles-active">
       <div class="pole-card" style="--accent:#E3A544">
         <span class="status">● Actif</span>
@@ -404,6 +420,14 @@
   </div>
 </section>
 
+<section id="actualites" hidden>
+  <div class="wrap">
+    <h2 class="section-title">Actualités</h2>
+    <p class="section-sub">Les nouvelles de Nexus Numérique.</p>
+    <div class="news-list" id="news-list"></div>
+  </div>
+</section>
+
 <section id="realisations" hidden>
   <div class="wrap">
     <h2 class="section-title">Nos réalisations</h2>
@@ -429,7 +453,7 @@
 <section id="commander">
   <div class="wrap">
     <h2 class="section-title">Commander un flocage</h2>
-    <p class="section-sub">Choisissez votre article, on vous répond directement sur WhatsApp avec le devis.</p>
+    <p class="section-sub" data-cms="commander_sub">Choisissez votre article, on vous répond directement sur WhatsApp avec le devis.</p>
     <div class="form-panel accent-clay">
       <div class="field">
         <label for="floc-article">Article</label>
@@ -476,7 +500,7 @@
 <section id="reserver">
   <div class="wrap">
     <h2 class="section-title">Réserver un créneau gaming</h2>
-    <p class="section-sub">Choisissez votre site et votre créneau, la demande part directement sur WhatsApp.</p>
+    <p class="section-sub" data-cms="reserver_sub">Choisissez votre site et votre créneau, la demande part directement sur WhatsApp.</p>
     <div class="form-panel accent-gold">
       <div class="field-row">
         <div class="field">
@@ -531,7 +555,7 @@
 <section id="devis">
   <div class="wrap">
     <h2 class="section-title">Demander un devis</h2>
-    <p class="section-sub">Pour l'agriculture, l'environnement, le bâtiment ou tout autre service Nexus.</p>
+    <p class="section-sub" data-cms="devis_sub">Pour l'agriculture, l'environnement, le bâtiment ou tout autre service Nexus.</p>
     <div class="form-panel accent-mixed">
       <div class="field">
         <label for="devis-pole">Pôle concerné</label>
@@ -605,11 +629,18 @@
   </div>
 </section>
 
+<section id="faq" hidden>
+  <div class="wrap">
+    <h2 class="section-title">Questions fréquentes</h2>
+    <div class="faq-list" id="faq-list"></div>
+  </div>
+</section>
+
 <section id="contact" style="border-bottom:none;">
   <div class="wrap">
     <div class="contact-box">
-      <h2 class="display">Une autre question ?</h2>
-      <p>Écoles, clubs, entreprises, associations ou particuliers — écrivez-nous directement.</p>
+      <h2 class="display" data-cms="contact_title">Une autre question ?</h2>
+      <p data-cms="contact_text">Écoles, clubs, entreprises, associations ou particuliers — écrivez-nous directement.</p>
       <a class="btn btn-gold" href="https://wa.me/2250502080649" target="_blank" rel="noopener">Écrire sur WhatsApp</a>
     </div>
   </div>
@@ -717,5 +748,6 @@
 <script src="galerie.js"></script>
 <script src="paiement2.js"></script>
 <script src="poles.js"></script>
+<script src="contenu.js"></script>
 </body>
 </html>
